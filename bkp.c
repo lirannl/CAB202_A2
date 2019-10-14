@@ -35,10 +35,10 @@ coords getNextPosition(coords p, bresenhaming *bresen) // For a given slope/vert
         currWall->bresen.direction = (rand() % 2 == 0) ? 1 : -1; // Select a direction randomly, since I'm not implementing ADC
         if ( (currWall->wallCoords[currWall->len].x) != (currWall->wallCoords[0].x) ) // If the first and last x values aren't equal (non vertical wall)
         // Calculate the wall's slope
-        ( (currWall->wallCoords[currWall->len].y) - (currWall->wallCoords[0].y) )/( (currWall->wallCoords[currWall->len].x) - (currWall->wallCoords[0].x) );
+        currWall->bresen.derr = ( (currWall->wallCoords[currWall->len].y) - (currWall->wallCoords[0].y) )/( (currWall->wallCoords[currWall->len].x) - (currWall->wallCoords[0].x) );
         else // Vertical wall
         {
-            currWall->bresen.vert = 1; currWall->bresen.derr = 0; // 
+            currWall->bresen.vert = 1; currWall->bresen.derr = 0;
         }
         
     }
