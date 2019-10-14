@@ -59,18 +59,9 @@ typedef struct
 
 typedef struct
 {
-    float err;
-    float derr;
-    uint8_t vert;
-    int8_t direction;
-} bresenhaming;
-
-typedef struct
-{
     coords wallCoords[48]; // Each wall supports up to 30 pixels
     uint8_t len : 7; // Length of wall (in pixels)
     uint8_t valid : 1;
-    bresenhaming bresen;
 } wall;
 
 struct inputModel
@@ -195,7 +186,6 @@ unsigned int collides_with_wall(level *lvl, coords coord)
     {
         if (lvl->walls[i].valid) for(unsigned int pixel = 0; pixel < lvl->walls[i].len; pixel++) // if it's valid - for each pixel of said wall
         {
-            //if(distance(&coord, &lvl->walls[i].wallCoords[pixel], COORD_TO_COORD) == 0) return 1; // Stop running as soon as a collision is found (if one is found)
             if (lvl->walls[i].wallCoords[pixel].x == coord.x && lvl->walls[i].wallCoords[pixel].y == coord.y) return 1;
         }        
     }
@@ -710,19 +700,6 @@ object makeDef(tinyBitmap *bmp) // Object initialiser
     { 
         object returnval = {.valid = 0, .sprite = bmp}; return returnval;
     }
-
-void registerSlope(wall *w)
-{
-    w->bresen.err = 0;
-        w->bresen.direction = (rand() % 2 == 0) ? 1 : -1; // Select a direction randomly, since I'm not implementing ADC
-        if ( (w->wallCoords[w->len].x) != (w->wallCoords[0].x) ) // If the first and last x values aren't equal (non vertical wall)
-        // Calculate the wall's slope
-        w->bresen.derr = ( (w->wallCoords[w->len].y) - (w->wallCoords[0].y) )/( (w->wallCoords[w->len].x) - (w->wallCoords[0].x) );
-        else // Vertical wall
-        {
-            w->bresen.vert = 1; w->bresen.derr = 0;
-        }
-}
 
 void levelInit(struct game *data, level *thisLevel)
 {
