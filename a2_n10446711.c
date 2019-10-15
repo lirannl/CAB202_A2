@@ -51,13 +51,13 @@ tinyBitmap cheeseBMP = {.big = 0, .image = 0b0000000100010100111000000};
 tinyBitmap doorBMP = {.big = 1, .image = 0b0111001010010100101001110};
 tinyBitmap trapBMP = {.big = 0, .image = 0b0000001110000000111000000};
 
-typedef struct
+typedef struct // 2 bytes
 { 
     int x;
     int y;
 } coords;
 
-typedef struct
+typedef struct // 97 bytes
 {
     coords wallCoords[48]; // Each wall supports up to 30 pixels
     uint8_t len : 7; // Length of wall (in pixels)
@@ -74,8 +74,6 @@ struct inputModel input[7];
 
 typedef struct
 {
-    unsigned int lives : 3;
-    unsigned int super : 8;
     coords p;
     tinyBitmap *sprite;
 } character;
@@ -108,11 +106,11 @@ typedef struct
     object trap[5];
     firework rocket[20];
     object door;
-    uint8_t cheeseCollected;
+    uint8_t cheeseCollected:3;
     uint8_t tom_startx:7;
-    uint8_t tom_starty;
+    uint8_t tom_starty:6;
     uint8_t jerry_startx:7;
-    uint8_t jerry_starty;
+    uint8_t jerry_starty:6;
     uint8_t finished :1;
 } level;
 
@@ -120,6 +118,8 @@ struct game
 {
     uint8_t level :7;
     uint8_t score;
+    unsigned int lives : 3;
+    unsigned int super : 5;
     volatile uint8_t wallSpeed;
     volatile uint8_t characterSpeed;
     uint8_t done :1;
@@ -306,10 +306,10 @@ uint8_t character_collides_obj(character *c, object *obj)
 uint8_t isTotallyClearObj(object *obj, level *lvl)
 {
     unsigned int vacant = 1;
-    for (int internali = 0; internali < len(lvl->trap); internali++)
+    for (int i = 0; i < len(lvl->trap); i++)
         {
-            if (vacant) vacant = !obj_collides_obj(obj, &lvl->trap[internali]);
-            if (vacant) vacant = !obj_collides_obj(obj, &lvl->cheese[internali]);
+            if (vacant) vacant = !obj_collides_obj(obj, &lvl->trap[i]);
+            if (vacant) vacant = !obj_collides_obj(obj, &lvl->cheese[i]);
         }
         if (vacant) vacant = !obj_collides_obj(obj, &lvl->door);
     return vacant;
@@ -631,7 +631,7 @@ void checkCollisions(level *lvl, struct game *data)
     {
         respawnCharacter(&jerry, lvl);
         respawnCharacter(&tom, lvl);
-        jerry.lives--;
+        data->lives--;
     }
     for (int i = 0; i < len(lvl->cheese); i++) // For each cheese and trap
     {
@@ -644,7 +644,7 @@ void checkCollisions(level *lvl, struct game *data)
         }
         if (character_collides_obj(&jerry, &lvl->trap[i])) // Handling trap collision
         {
-            jerry.lives--;
+            data->lives--;
             lvl->trap[i].valid = 0;
             clear_bmp(lvl->trap[i].p.x, lvl->trap[i].p.y, lvl->trap[i].sprite);
         }
@@ -805,7 +805,7 @@ void timed_events(level *lvl)
 
 void draw_statusbar(level *lvl, struct game *data)
 {
-    draw_formatted(0, 0, "LV%d|L%d|S%02d|%02d:", data->level, jerry.lives, data->score, times.time / 60);
+    draw_formatted(0, 0, "LV%d|L%d|S%02d|%02d:", data->level, data->lives, data->score, times.time / 60);
     draw_formatted(69, 0, "%02d", times.time%60);
 }
 
@@ -841,7 +841,7 @@ void draw_objects(level *level)
 void process(struct game *data, level *level) // Game tick
 {
     debounce_process();
-    if (jerry.lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
+    if (data->lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
     if (!IS_GAME_PAUSED && times.time > 0) timed_events(level); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
     static int scaler = 0; // Establish a scaler for use with the moveFireWorks function
     increment(&scaler, 1, 3); if (scaler == 0 && !IS_GAME_PAUSED)
@@ -864,10 +864,8 @@ void game() // Run a game
     gameData.score = 0;
     gameData.characterSpeed = 1;
     gameData.wallSpeed = 0;
-    tom.lives = 5;
-    tom.super = 0;
-    jerry.lives = 5;
-    jerry.super = 0;
+    gameData.lives = 5;
+    gameData.super = 0;
     // Reset the time and unpause (in case the previous game was paused), also, reset the second indicator
     times.time = 0;
     times.secondFragments = 0;
