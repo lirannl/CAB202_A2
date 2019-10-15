@@ -57,12 +57,17 @@ typedef struct // 2 bytes
     int y;
 } coords;
 
-typedef struct // 97 bytes
+typedef struct // 5 bytes
 {
-    coords wallCoords[48]; // Each wall supports up to 30 pixels
-    uint8_t len : 7; // Length of wall (in pixels)
-    uint8_t valid : 1;
+    coords edge[2]; // 4 bytes
+    uint8_t valid;
 } wall;
+
+struct wallPixels
+{
+    coords wallCoords[48]; // 96 bytes
+    uint8_t len; // Length of wall (in pixels)
+};
 
 struct inputModel
 {
@@ -180,13 +185,81 @@ unsigned int distance(coords *p0, coords *p1, char axis) // Distance calculation
     return dx + dy;
 }
 
+struct wallPixels get_wallCoords(wall *w) { // Build the wall's pixel array
+    // This is a modified version of the draw_line function.
+    // The formula of x % LCD_X produces an x position which wraps around the screen if out of bounds, for each pixel drawn.
+    // The formula of ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT does the same idea, only it shifts the original coordinate up by 10 pixels
+    // then it wraps around the screen if it was 10 pixels shorter than it was, and then it shifts back down by 10 pixels, because the status bar is at the top, not the bottom.
+    // Additionally, it also returns a list of coordinates which the wall occupies
+    struct wallPixels output;
+    int x1 = w->edge[0].x;
+    int y1 = w->edge[0].y;
+    int x2 = w->edge[1].x;
+    int y2 = w->edge[1].y;
+    unsigned int pixel_num = 0; // The number of pixels of the wall were formed so far (in this instance of the function)
+    
+    #define register_wall_pixel(px, py) ({\
+        output.wallCoords[pixel_num].x = px % LCD_X; \
+        output.wallCoords[pixel_num].y = ((py - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT; \
+        pixel_num++;})
+    
+    for (int i = 0; i < len(output.wallCoords); i++) {output.wallCoords[i].x = 0; output.wallCoords[i].y = 0;} // Empty the wall's array with invalid coordinates (y cannot possibly be smaller than 10 since that's the status bar)
+	if ( x1 == x2 ) {
+		// Draw vertical line
+		for ( int i = y1; (y2 > y1) ? i <= y2 : i >= y2; (y2 > y1) ? i++ : i-- ) { // Register wall pixel
+            register_wall_pixel(x1 % LCD_X, ((i - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
+		}
+	}
+	else if ( y1 == y2 ) {
+		// Draw horizontal line
+		for ( int i = x1; (x2 > x1) ? i <= x2 : i >= x2; (x2 > x1) ? i++ : i-- ) { // Register wall pixel
+            register_wall_pixel(i % LCD_X, ((y1 - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
+		}
+	}
+	else {
+		//	Always draw from left to right, regardless of the order the endpoints are 
+		//	presented.
+		if ( x1 > x2 ) {
+			int t = x1;
+			x1 = x2;
+			x2 = t;
+			t = y1;
+			y1 = y2;
+			y2 = t;
+		}
+
+		// Get Bresenhaming...
+		float dx = x2 - x1;
+		float dy = y2 - y1;
+		float err = 0.0;
+		float derr = ABS(dy / dx);
+
+		for ( int x = x1, y = y1; (dx > 0) ? x <= x2 : x >= x2; (dx > 0) ? x++ : x-- ) {
+            register_wall_pixel(x % LCD_X, ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
+			err += derr;
+			while ( err >= 0.5 && ((dy > 0) ? y <= y2 : y >= y2) ) {
+                register_wall_pixel(x % LCD_X, ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
+				y += (dy > 0) - (dy < 0);
+				err -= 1.0;
+			}
+		}
+	}
+    #undef register_wall_pixel // Ensure that this macro only expands within this function to prevent compiler errors later
+    output.len = pixel_num; // Register the wall's length based on how many pixels would've normally been drawn by a draw_line function
+    return output;
+}
+
 unsigned int collides_with_wall(level *lvl, coords coord)
 {
     for(unsigned int i = 0; i < len(lvl->walls); i++) // For each wall
     {
-        if (lvl->walls[i].valid) for(unsigned int pixel = 0; pixel < lvl->walls[i].len; pixel++) // if it's valid - for each pixel of said wall
+        if (lvl->walls[i].valid) 
         {
-            if (lvl->walls[i].wallCoords[pixel].x == coord.x && lvl->walls[i].wallCoords[pixel].y == coord.y) return 1;
+            struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
+            for(int pixel = 0; pixel < wp.len; pixel++) // if it's valid - for each pixel of said wall
+            {
+                if (wp.wallCoords[pixel].x == coord.x && wp.wallCoords[pixel].y == coord.y) return 1;
+            }
         }        
     }
     return 0;
@@ -313,65 +386,6 @@ uint8_t isTotallyClearObj(object *obj, level *lvl)
         }
         if (vacant) vacant = !obj_collides_obj(obj, &lvl->door);
     return vacant;
-}
-
-void form_wall(wall *w, int x1, int y1, int x2, int y2) { // Build the wall's pixel array
-    // This is a modified version of the draw_line function.
-    // The formula of x % LCD_X produces an x position which wraps around the screen if out of bounds, for each pixel drawn.
-    // The formula of ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT does the same idea, only it shifts the original coordinate up by 10 pixels
-    // then it wraps around the screen if it was 10 pixels shorter than it was, and then it shifts back down by 10 pixels, because the status bar is at the top, not the bottom.
-    // Additionally, it also returns a list of coordinates which the wall occupies
-    
-    unsigned int pixel_num = 0; // The number of pixels of the wall were formed so far (in this instance of the function)
-    
-    #define register_wall_pixel(px, py) ({\
-        w->wallCoords[pixel_num].x = px % LCD_X; \
-        w->wallCoords[pixel_num].y = ((py - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT; \
-        pixel_num++;})
-    
-    for (int i = 0; i < len(w->wallCoords); i++) {w->wallCoords[i].x = 0; w->wallCoords[i].y = 0;} // Empty the wall's array with invalid coordinates (y cannot possibly be smaller than 10 since that's the status bar)
-	if ( x1 == x2 ) {
-		// Draw vertical line
-		for ( int i = y1; (y2 > y1) ? i <= y2 : i >= y2; (y2 > y1) ? i++ : i-- ) { // Register wall pixel
-            register_wall_pixel(x1 % LCD_X, ((i - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
-		}
-	}
-	else if ( y1 == y2 ) {
-		// Draw horizontal line
-		for ( int i = x1; (x2 > x1) ? i <= x2 : i >= x2; (x2 > x1) ? i++ : i-- ) { // Register wall pixel
-            register_wall_pixel(i % LCD_X, ((y1 - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
-		}
-	}
-	else {
-		//	Always draw from left to right, regardless of the order the endpoints are 
-		//	presented.
-		if ( x1 > x2 ) {
-			int t = x1;
-			x1 = x2;
-			x2 = t;
-			t = y1;
-			y1 = y2;
-			y2 = t;
-		}
-
-		// Get Bresenhaming...
-		float dx = x2 - x1;
-		float dy = y2 - y1;
-		float err = 0.0;
-		float derr = ABS(dy / dx);
-
-		for ( int x = x1, y = y1; (dx > 0) ? x <= x2 : x >= x2; (dx > 0) ? x++ : x-- ) {
-            register_wall_pixel(x % LCD_X, ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
-			err += derr;
-			while ( err >= 0.5 && ((dy > 0) ? y <= y2 : y >= y2) ) {
-                register_wall_pixel(x % LCD_X, ((y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT);
-				y += (dy > 0) - (dy < 0);
-				err -= 1.0;
-			}
-		}
-	}
-    #undef register_wall_pixel // Ensure that this macro only expands within this function to prevent compiler errors later
-    w->len = pixel_num; // Register the wall's length based on how many pixels would've normally been drawn by a draw_line function
 }
 
 /*coords getNextPosition(coords p, double slope, int8_t vert) // For a given slope/vertical line, get the next position.
@@ -701,34 +715,32 @@ object makeDef(tinyBitmap *bmp) // Object initialiser
         object returnval = {.valid = 0, .sprite = bmp}; return returnval;
     }
 
+#define createWall(wall, x1, y1, x2, y2) ({ \
+wall.edge[0].x = x1; wall.edge[0].y = y1; wall.edge[1].x = x2; wall.edge[1].y = y2; wall.valid = 1;    \
+})
+
 void levelInit(struct game *data, level *thisLevel)
 {
     thisLevel->finished = 0;
+    for (int i = 0; i < 6; i++) thisLevel->walls[i].valid = 0; // Make all walls invalid by default
     if (data->level == 1) // When initiating level 1 -
     {
         thisLevel->jerry_startx = 0; thisLevel->jerry_starty = STATUS_BAR_HEIGHT + 1;
         thisLevel->tom_startx = LCD_X - 5; thisLevel->tom_starty = LCD_Y - 9;
-        thisLevel->walls[0].valid = 1;
-        thisLevel->walls[1].valid = 1;
-        thisLevel->walls[2].valid = 1;
-        thisLevel->walls[3].valid = 1;
-        thisLevel->walls[4].valid = 0;
-        thisLevel->walls[5].valid = 0;
         // Hardcoded walls
         {
-            form_wall(&thisLevel->walls[0], 18, 15, 13, 25);
-            form_wall(&thisLevel->walls[1], 25, 35, 25, 45);
-            form_wall(&thisLevel->walls[2], 45, 10, 60, 10);
-            form_wall(&thisLevel->walls[3], 58, 25, 72, 30);
+            createWall(thisLevel->walls[0], 18, 15, 13, 25);
+            createWall(thisLevel->walls[1], 25, 35, 25, 45);
+            createWall(thisLevel->walls[2], 45, 10, 60, 10);
+            createWall(thisLevel->walls[3], 58, 25, 72, 30);
         }
     }
-    if (data->level == 2)
+    if (data->level == 2) // Specifically after level 1 - enable USB serial
     {
         usb_init(); // Enable serial
     }
     if (data->level > 1) // After level 1
     {
-        for (int i = 0; i < 6; i++) thisLevel->walls[i].valid = 0;
         levelInitUSB(thisLevel, data); // Initialise level from USB
     }
     // Regardless of which level it is - move tom and Jerry to their starting positions
@@ -811,11 +823,14 @@ void draw_statusbar(level *lvl, struct game *data)
 
 void draw_walls(level *level, unsigned int show)
 {
-    for (int i = 0; i < len(level->walls); i++) // For each wall
-    if (level->walls[i].valid) for(int wallPixel = 0; wallPixel < level->walls[i].len; wallPixel++) // If it is valid, then for each of its' pixels
-    if (level->walls[i].wallCoords[wallPixel].y >= 10) // If within play area
+    for (int i = 0; i < len(level->walls); i++) if (level->walls[i].valid)// For each valid wall
     {
-        draw_pixel(level->walls[i].wallCoords[wallPixel].x, level->walls[i].wallCoords[wallPixel].y, show ? FG_COLOUR : BG_COLOUR); // Either draw or clear it (depending on the whether show is set or not)
+        struct wallPixels wp = get_wallCoords(&level->walls[i]);
+        for(int wallPixel = 0; wallPixel < wp.len; wallPixel++) // For each of its' pixels
+        if (wp.wallCoords[wallPixel].y >= 10) // If within play area
+        {
+            draw_pixel(wp.wallCoords[wallPixel].x, wp.wallCoords[wallPixel].y, show ? FG_COLOUR : BG_COLOUR); // Either draw or clear it (depending on the whether show is set or not)
+        }
     }
 }
 
@@ -852,7 +867,6 @@ void process(struct game *data, level *level) // Game tick
     draw_walls(level, 1); // Redraw the walls
     draw_objects(level);
     if (!data->done) show_screen();
-    _delay_ms(5);
 }
 
 
