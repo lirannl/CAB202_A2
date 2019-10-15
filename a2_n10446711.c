@@ -57,15 +57,25 @@ typedef struct // 2 bytes
     int y;
 } coords;
 
-typedef struct // 5 bytes
+struct bresenhaming // 3 bytes
+{
+    float derr;
+    float err;
+    uint8_t reverseDir:1;
+    uint8_t vert:1;
+};
+
+
+typedef struct // 8 bytes
 {
     coords edge[2]; // 4 bytes
     uint8_t valid;
+    struct bresenhaming bresen;
 } wall;
 
-struct wallPixels
+struct wallPixels // 49 bytes
 {
-    coords wallCoords[48]; // 96 bytes
+    coords wallCoords[24]; // 48 bytes
     uint8_t len; // Length of wall (in pixels)
 };
 
@@ -81,6 +91,7 @@ typedef struct
 {
     coords p;
     tinyBitmap *sprite;
+    struct bresenhaming bresen;
 } character;
 character tom = {.sprite = &tomBMP};
 character jerry = {.sprite = &jerryBMP};
@@ -253,16 +264,20 @@ unsigned int collides_with_wall(level *lvl, coords coord)
 {
     for(unsigned int i = 0; i < len(lvl->walls); i++) // For each wall
     {
-        if (lvl->walls[i].valid) 
+        if (lvl->walls[i].valid) // If it's valid
         {
-            struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
-            for(int pixel = 0; pixel < wp.len; pixel++) // if it's valid - for each pixel of said wall
+            // Try to eliminate the possibilty of a collision without calculating all of the pixels
+            if ( (distance(&coord, &lvl->walls[i].edge[0], 'a') < 12) || (distance(&coord, &lvl->walls[i].edge[1], 'a') < 12) )
             {
-                if (wp.wallCoords[pixel].x == coord.x && wp.wallCoords[pixel].y == coord.y) return 1;
+                struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
+                for(int pixel = 0; pixel < wp.len; pixel++) // if it's valid - for each pixel of said wall
+                {
+                    if (wp.wallCoords[pixel].x == coord.x && wp.wallCoords[pixel].y == coord.y) return 1; // Yes - there is a collision
+                }
             }
         }        
     }
-    return 0;
+    return 0; // No - there is no collision
 }
 
 unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, unsigned int mode)
@@ -508,6 +523,14 @@ ISR(TIMER1_OVF_vect) { // Timer 1 overflows - increment game time
     }
 }
 
+void tomRandom(struct game *data)
+{
+    // Randomly select a direction in the next 2 lines
+    tom.bresen.reverseDir = (rand() % 2 == 0);
+    tom.bresen.derr = ((rand() % 2 == 0) ? 1 : -1) * (rand() % 1000 + 1) / 100;
+    data->characterSpeed = ((rand() % 16) + 8) / 4; // Select a random, appropriate speed 
+}
+
 uint8_t moveCharacter(int8_t xoffset, int8_t yoffset, character *c, level *lvl)
 {
     coords targetCoords = {.x = c->p.x + xoffset, .y = c->p.y + yoffset};
@@ -523,6 +546,28 @@ uint8_t moveCharacter(int8_t xoffset, int8_t yoffset, character *c, level *lvl)
         return 1; // Successful movement
     }
     return 0; // Movement failed
+}
+
+coords getNextPosition(coords p, struct bresenhaming *bresen) // For a given slope/vertical line, get the next position.
+{
+    float slope = bresen->derr;
+    int direction = bresen->reverseDir ? -1 : 1;
+    if (slope != 0) slope = 1/slope; // get a perpendicular slope to the one provided
+    coords output = p;
+    if (bresen->vert) {output.x = p.x; output.y = p.y+direction;} // Manually handling vertical lines since there's no mathematical expression for their slope
+    else // slope is relevant
+    {
+        // The bresenhaming algorithm from draw_wall, adapted to work for a single iteration with a slope
+        if ( bresen->err >= 0.5 ) { 
+				output.y += direction;
+				bresen->err -= 1.0;
+			}
+        else {
+			output.x += direction;
+			bresen->err += slope;
+		}
+    }
+    return output;
 }
 
 uint8_t tryMoveFirework(int xoffset, int yoffset, firework *obj, level *lvl)
@@ -716,7 +761,8 @@ object makeDef(tinyBitmap *bmp) // Object initialiser
     }
 
 #define createWall(wall, x1, y1, x2, y2) ({ \
-wall.edge[0].x = x1; wall.edge[0].y = y1; wall.edge[1].x = x2; wall.edge[1].y = y2; wall.valid = 1;    \
+wall.edge[0].x = x1; wall.edge[0].y = y1; wall.edge[1].x = x2; wall.edge[1].y = y2; \
+wall.valid = 1;    \
 })
 
 void levelInit(struct game *data, level *thisLevel)
@@ -742,6 +788,21 @@ void levelInit(struct game *data, level *thisLevel)
     if (data->level > 1) // After level 1
     {
         levelInitUSB(thisLevel, data); // Initialise level from USB
+    }
+    // Calculate wall slopes (on levelinit)
+    for(int i = 0; i < len(thisLevel->walls); i++)
+    {
+        wall *currWall = &thisLevel->walls[i];
+        currWall->bresen.err = 0;
+        currWall->bresen.reverseDir = (rand() % 2 == 0); // Select a direction randomly, since I'm not implementing ADC
+        if ( (currWall->edge[1].x) != (currWall->edge[0].x) ) // If the first and last x values aren't equal (non vertical wall)
+        // Calculate the wall's slope
+        currWall->bresen.derr = ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
+        else // Vertical wall
+        {
+            currWall->bresen.vert = 1; currWall->bresen.derr = 0;
+        }
+        
     }
     // Regardless of which level it is - move tom and Jerry to their starting positions
     respawnCharacter(&jerry, thisLevel);
@@ -859,7 +920,7 @@ void process(struct game *data, level *level) // Game tick
     if (data->lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
     if (!IS_GAME_PAUSED && times.time > 0) timed_events(level); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
     static int scaler = 0; // Establish a scaler for use with the moveFireWorks function
-    increment(&scaler, 1, 3); if (scaler == 0 && !IS_GAME_PAUSED)
+    increment(&scaler, 1, 2); if (scaler == 0 && !IS_GAME_PAUSED)
     moveFireWorks(level);
     readControls(level, data);
     checkCollisions(level, data);
