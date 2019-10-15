@@ -65,7 +65,6 @@ struct bresenhaming // 3 bytes
     uint8_t vert:1;
 };
 
-
 typedef struct // 8 bytes
 {
     coords edge[2]; // 4 bytes
@@ -177,7 +176,7 @@ void draw_formatted(int x, int y, const char * format, ...) {
 }
 
 
-uint8_t isVacant(uint8_t x, uint8_t y, uint8_t size, level *lvl) // Is this spot available to move to/place in?
+uint8_t isWithinBounds(uint8_t x, uint8_t y, uint8_t size, level *lvl) // Is this spot available to move to/place in?
 {
     if (
     ( y>=STATUS_BAR_HEIGHT&&y<(LCD_Y-size) ) && // Check if within play area vertically
@@ -333,9 +332,9 @@ unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, un
 #define bmp_collides_wall(lvl, x, y, bmppointer) bmp_actions(lvl, x, y, bmppointer, 0)
 #define bmp_get_pixels(bmp_pixels, x, y, bmppointer) bmp_actions(bmp_pixels, x, y, bmppointer, 1)
 
-uint8_t isVacantSprite(coords *coordinates, const tinyBitmap *bmp, level *lvl)
+uint8_t isVacantForSprite(coords *coordinates, const tinyBitmap *bmp, level *lvl)
 {
-    if (isVacant(coordinates->x, coordinates->y, bmp->big ? 5 : 3, lvl))
+    if (isWithinBounds(coordinates->x, coordinates->y, bmp->big ? 5 : 3, lvl))
     return !bmp_collides_wall(lvl, coordinates->x, coordinates->y, bmp);
     return 0;
 }
@@ -527,32 +526,38 @@ void tomRandom(struct game *data)
 {
     // Randomly select a direction in the next 2 lines
     tom.bresen.reverseDir = (rand() % 2 == 0);
-    tom.bresen.derr = ((rand() % 2 == 0) ? 1 : -1) * (rand() % 1000 + 1) / 100;
-    data->characterSpeed = ((rand() % 16) + 8) / 4; // Select a random, appropriate speed 
+    tom.bresen.derr = ((rand() % 2 == 0) ? 1 : -1) * ((rand() % 12) + 1);
+    tom.bresen.derr /= 4;
+    data->characterSpeed = ((rand() % 4) + 3); // Select a random, appropriate speed
 }
 
-uint8_t moveCharacter(int8_t xoffset, int8_t yoffset, character *c, level *lvl)
+uint8_t moveCharacterOptions(coords targetCoords, int8_t xoffset, int8_t yoffset, character *c, level *lvl)
 {
-    coords targetCoords = {.x = c->p.x + xoffset, .y = c->p.y + yoffset};
+    if (xoffset != 0 || yoffset != 0) // If no offset is provided (0 in both axes), that means I want absolute movement rather than relative.
+    {
+        targetCoords.x = c->p.x + xoffset; targetCoords.y = c->p.y + yoffset;
+    }
     if
-    (
-        isVacantSprite(&targetCoords, c->sprite, lvl)
-        &&
-        isVacant(c->p.x + xoffset, c->p.y + yoffset, c->sprite->big ? 5 : 3, lvl)
-    )
+    (isVacantForSprite(&targetCoords, c->sprite, lvl))
     {
         clear_bmp(c->p.x, c->p.y, c->sprite); // Clear the character sprite from the previous position
-        c->p.x+=xoffset; c->p.y+=yoffset;
+        c->p=targetCoords;
         return 1; // Successful movement
     }
     return 0; // Movement failed
 }
 
+// Relative movement function
+#define moveCharacter(xoffset, yoffset, c, lvl) moveCharacterOptions(tom.p, xoffset, yoffset, c, lvl) // A copy of Tom's coordinates are just passed as a dummy, they'll be ignored since an offset is provided
+
+// Absolute movement function
+#define moveCharacterTo(coords, c, lvl) moveCharacterOptions(coords, 0, 0, c, lvl) // No offset is provided, causing the movement to be absolute
+
 coords getNextPosition(coords p, struct bresenhaming *bresen) // For a given slope/vertical line, get the next position.
 {
     float slope = bresen->derr;
     int direction = bresen->reverseDir ? -1 : 1;
-    if (slope != 0) slope = 1/slope; // get a perpendicular slope to the one provided
+    //if (slope != 0) slope = 1/slope; // get a perpendicular slope to the one provided
     coords output = p;
     if (bresen->vert) {output.x = p.x; output.y = p.y+direction;} // Manually handling vertical lines since there's no mathematical expression for their slope
     else // slope is relevant
@@ -572,7 +577,7 @@ coords getNextPosition(coords p, struct bresenhaming *bresen) // For a given slo
 
 uint8_t tryMoveFirework(int xoffset, int yoffset, firework *obj, level *lvl)
 {
-    if (isVacant(obj->p.x, obj->p.y, 1, lvl) && !collides_with_wall(lvl, obj->p))
+    if (isWithinBounds(obj->p.x, obj->p.y, 1, lvl) && !collides_with_wall(lvl, obj->p))
     {
         draw_pixel(obj->p.x, obj->p.y, BG_COLOUR); // Remove the firework from the current position
         // Change the firework's position
@@ -638,7 +643,7 @@ void respawnCharacter(character *character, level *lvl) // Character respawn - g
 {
     unsigned int placed = 0;
     #define move(target, xoffset, yoffset) ({coords newTarget = {.x = target.x + xoffset, .y = target.y + yoffset};\
-    if (isVacantSprite(&newTarget, character->sprite, lvl)) { \
+    if (isVacantForSprite(&newTarget, character->sprite, lvl)) { \
     clear_bmp(character->p.x, character->p.y, character->sprite); \
     character->p = newTarget; placed = 1;}})
     int xoffset;
@@ -654,6 +659,17 @@ void respawnCharacter(character *character, level *lvl) // Character respawn - g
     for (xoffset = 0; !placed && target.x + xoffset > 0 ; xoffset--) // Try spawning right if still occupied
     { move(target, xoffset, 0); }
     #undef move
+}
+
+void moveTom(level *lvl, struct game *data)
+{
+    coords target = getNextPosition(tom.p, &tom.bresen);
+    if (!isVacantForSprite(&target, tom.sprite, lvl)) // If the target is not clear for tom to move into
+    {
+        tomRandom(data);
+    }
+    clear_bmp(tom.p.x, tom.p.y, tom.sprite);
+    tom.p = target;
 }
 
 void fireFirework(level *lvl, struct game *data) // Taken from my first assignment
@@ -677,7 +693,7 @@ void readControls(level *lvl, struct game *data)
     if (input[joyDown].switchClosed) moveCharacter(0, 1, &jerry, lvl);
     if (input[joyPress].switchClosed && !input[joyPress].press_handled) // Once per joystick press
     { fireFirework(lvl, data); input[joyPress].press_handled = 1; }
-    if (input[buttonL].switchClosed && !input[buttonL].press_handled) 
+    if (input[buttonL].switchClosed && !input[buttonL].press_handled)
     {lvl->finished = 1; input[buttonL].press_handled = 1;}
     // For every click of the right button - toggle a pause (ignoring the first second of each game - since the player just clicked it to proceed)
     if (input[buttonR].switchClosed && !input[buttonR].press_handled && times.secondFragments > 2) 
@@ -686,18 +702,22 @@ void readControls(level *lvl, struct game *data)
 
 void checkCollisions(level *lvl, struct game *data)
 {
-    if (character_collides_character(&tom, &jerry)) // Upon collision with tom;
+    if (character_collides_character(&tom, &jerry))
     {
         respawnCharacter(&jerry, lvl);
         respawnCharacter(&tom, lvl);
         data->lives--;
+    }
+    if (character_collides_obj(&jerry, &lvl->door))
+    {
+        lvl->finished = 1; // Exit the current level
     }
     for (int i = 0; i < len(lvl->cheese); i++) // For each cheese and trap
     {
         if (character_collides_obj(&jerry, &lvl->cheese[i])) // Handling cheese collision
         {
             data->score++;
-            lvl->cheeseCollected++;
+            if (lvl->cheeseCollected < 5) lvl->cheeseCollected++; // Register extra cheese collected - up to 5. I have no need to count beyond 5.
             lvl->cheese[i].valid = 0;
             clear_bmp(lvl->cheese[i].p.x, lvl->cheese[i].p.y, lvl->cheese[i].sprite);
         }
@@ -728,9 +748,10 @@ void startingScreen()
     draw_string(0, 10, "n10446711", FG_COLOUR);
     draw_string(0, 20, "TJ", FG_COLOUR);
     show_screen();
-    _delay_ms(500);
-    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) {debounce_process();} // Wait until buttonR is pressed
+    long seed = 0;
+    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) {debounce_process(); seed++;} // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
+    srand(seed); // Seed rand() based on the exact time the user pressed the right button to exit the starting screen
 }
 
 void gameOverScreen()
@@ -768,11 +789,13 @@ wall.valid = 1;    \
 void levelInit(struct game *data, level *thisLevel)
 {
     thisLevel->finished = 0;
+    thisLevel->cheeseCollected = 0;
     for (int i = 0; i < 6; i++) thisLevel->walls[i].valid = 0; // Make all walls invalid by default
     if (data->level == 1) // When initiating level 1 -
     {
         thisLevel->jerry_startx = 0; thisLevel->jerry_starty = STATUS_BAR_HEIGHT + 1;
         thisLevel->tom_startx = LCD_X - 5; thisLevel->tom_starty = LCD_Y - 9;
+        tomRandom(data); // Give Tom random movement parameters
         // Hardcoded walls
         {
             createWall(thisLevel->walls[0], 18, 15, 13, 25);
@@ -815,7 +838,7 @@ void levelInit(struct game *data, level *thisLevel)
     }
     for(int i = 0; i < 20; i++) thisLevel->rocket[i].valid = 0;
     thisLevel->door = makeDef(&doorBMP);
-    clear_screen();
+    clear_screen(); // Remove everything in preparation for the next level
 }
 
 void placeObj(level *lvl, object *obj)
@@ -825,8 +848,8 @@ void placeObj(level *lvl, object *obj)
     coords target;
     target.x = rand() % LCD_X; target.y = ( rand() % (LCD_Y - STATUS_BAR_HEIGHT) ) + STATUS_BAR_HEIGHT;
     // Keep on generating random locations until a vacant one is found
-    while(!isVacant(target.x, target.y, size, lvl) || 
-    !isVacantSprite(&target, obj->sprite, lvl) || 
+    while(!isWithinBounds(target.x, target.y, size, lvl) || 
+    !isVacantForSprite(&target, obj->sprite, lvl) || 
     !isTotallyClearObj(obj, lvl) ||
     distance(&target, &tom.p, 'a') < 10) // Don't place the cheese too close to tom
     {
@@ -862,7 +885,7 @@ void placeTrapAttempt(level *lvl)
     }
 }
 
-void timed_events(level *lvl)
+void timed_events(level *lvl, struct game *data)
 {
     if (times.secondPassed)
     {
@@ -872,6 +895,7 @@ void timed_events(level *lvl)
     }
     if (times.secondFragmentPassed)
     {
+        if (times.secondFragments % data->characterSpeed == 0) moveTom(lvl, data);
         times.secondFragmentPassed = 0;
     }
 }
@@ -918,10 +942,12 @@ void process(struct game *data, level *level) // Game tick
 {
     debounce_process();
     if (data->lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
-    if (!IS_GAME_PAUSED && times.time > 0) timed_events(level); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
+    if (!IS_GAME_PAUSED && times.time > 0) timed_events(level, data); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
     static int scaler = 0; // Establish a scaler for use with the moveFireWorks function
     increment(&scaler, 1, 2); if (scaler == 0 && !IS_GAME_PAUSED)
     moveFireWorks(level);
+    if (level->cheeseCollected >= 5 && !level->door.valid)  // If 5 or more cheese was collected in the level (and there isn't already a door)
+    placeObj(level, &level->door); // Place the door to the next level
     readControls(level, data);
     checkCollisions(level, data);
     draw_statusbar(level, data);
@@ -960,7 +986,6 @@ void game() // Run a game
 int main(void) {
 	setup();
     startingScreen();
-    srand(times.secondFragments); // Seed rand() with the current second fragments value - 
 	for ( ;; ) {
 		game();
 	}
