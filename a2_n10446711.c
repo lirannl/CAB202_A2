@@ -54,23 +54,28 @@ tinyBitmap milkBMP = {.big = 1, .image = 0b0000010001100010111000000};
 
 typedef struct // 2 bytes
 { 
+    float x;
+    float y;
+} coords;
+coords blank_p = {.x = 0, .y = 0};
+
+typedef struct // 2 bytes
+{
     int x;
     int y;
-} coords;
+} coords_int;
+coords blank_p_int = {.x = 0, .y = 0};
 
-// dx = cos()
-// dy = sin()
-
-typedef struct // 8 bytes
+typedef struct // 6 bytes
 {
     coords edge[2]; // 4 bytes
-    uint8_t valid;
-    double angle;
+    uint8_t valid:1;
+    int angle:9;
 } wall;
 
 struct wallPixels // 49 bytes
 {
-    coords wallCoords[24]; // 48 bytes
+    coords_int wallCoords[24]; // 48 bytes
     uint8_t len; // Length of wall (in pixels)
 };
 
@@ -86,27 +91,28 @@ typedef struct
 {
     coords p;
     tinyBitmap *sprite;
-    double angle;
+    float speedmod;
+    int angle;
 } character;
 character tom = {.sprite = &tomBMP};
-character jerry = {.sprite = &jerryBMP};
+character jerry = {.sprite = &jerryBMP, .speedmod=1};
 
 typedef struct
 {
     unsigned int valid : 1;
-    coords p;
+    coords_int p; // Since objects don't move, they don't need floating-point coordinates
     const tinyBitmap *sprite;
 } object;
 
 typedef struct
 {
     unsigned int valid : 1;
-    coords p;
+    coords_int p;
 } firework;
 
 struct bitmap_pixels
 {
-    coords p_array[25];
+    coords_int p_array[25];
     unsigned int len;
 };
 
@@ -116,6 +122,7 @@ typedef struct
     object cheese[5];
     object trap[5];
     firework rocket[20];
+    object milk;
     object door;
     uint8_t cheeseCollected:3;
     uint8_t tom_startx:7;
@@ -171,22 +178,37 @@ void draw_formatted(int x, int y, const char * format, ...) {
     draw_string(x, y, buffer, FG_COLOUR);
 }
 
+coords_int coords_to_int(coords *p_float)
+{
+    coords_int output = {.x = (int)round(p_float->x), .y  = (int)round(p_float->y)};
+    return output;
+}
 
-uint8_t isWithinBounds(uint8_t x, uint8_t y, uint8_t size, level *lvl) // Is this spot available to move to/place in?
+void draw_wall(struct wallPixels *wp)
+{
+    for(int wallPixel = 0; wallPixel < wp->len; wallPixel++) // For each of its' pixels
+    if (wp->wallCoords[wallPixel].y >= 10) // If within play area
+    {
+        draw_pixel(wp->wallCoords[wallPixel].x, wp->wallCoords[wallPixel].y, FG_COLOUR); // Draw the pixel
+    }
+}
+
+
+uint8_t isWithinBounds(coords_int *p, uint8_t size, level *lvl) // Is this spot available to move to/place in?
 {
     if (
-    ( y>=STATUS_BAR_HEIGHT&&y<(LCD_Y-size) ) && // Check if within play area vertically
-    ( x>=0&&x<(LCD_X-size) ) //&& // Check if within play area horizontally
+    ( p->y>=STATUS_BAR_HEIGHT && p->y<(LCD_Y-size) ) && // Check if within play area vertically
+    ( p->x>=0 && p->x<(LCD_X-size) ) // Check if within play area horizontally
     )
     return 1; 
     return 0;
 }
 
-unsigned int distance(coords *p0, coords *p1, char axis) // Distance calculation function
+unsigned int distance(coords_int *p0, coords_int *p1, char axis) // Distance calculation function
 {
-    int p0y_wrapped = ((p0->y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
-    int p1y_wrapped = ((p1->y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
-    unsigned int dx = (p0->x > p1->x ? -1 : 1) * (p1->x % LCD_X - p0->x % LCD_X);
+    int p0y_wrapped = (((int)round(p0->y) - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+    int p1y_wrapped = (((int)round(p1->y) - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+    unsigned int dx = ((int)round(p0->x) > p1->x ? -1 : 1) * ((int)round(p1->x) % LCD_X - (int)round(p0->x) % LCD_X);
     unsigned int dy = (p0->y > p1->y ? -1 : 1) * (p1y_wrapped - p0y_wrapped);
     if (axis == 'x') return dx;
     else if (axis == 'y') return dy;
@@ -200,11 +222,11 @@ struct wallPixels get_wallCoords(wall *w) { // Build the wall's pixel array
     // then it wraps around the screen if it was 10 pixels shorter than it was, and then it shifts back down by 10 pixels, because the status bar is at the top, not the bottom.
     // Additionally, it also returns a list of coordinates which the wall occupies
     struct wallPixels output;
-    int x1 = w->edge[0].x;
-    int y1 = w->edge[0].y;
-    int x2 = w->edge[1].x;
-    int y2 = w->edge[1].y;
-    unsigned int pixel_num = 0; // The number of pixels of the wall were formed so far (in this instance of the function)
+    int x1 = (int)round(w->edge[0].x);
+    int y1 = (int)round(w->edge[0].y);
+    int x2 = (int)round(w->edge[1].x);
+    int y2 = (int)round(w->edge[1].y);
+    unsigned int pixel_num = 0; // The number of pixels of the wall calculated so far (in this instance of the function)
     
     #define register_wall_pixel(px, py) ({\
         output.wallCoords[pixel_num].x = px % LCD_X; \
@@ -257,14 +279,16 @@ struct wallPixels get_wallCoords(wall *w) { // Build the wall's pixel array
     return output;
 }
 
-unsigned int collides_with_wall(level *lvl, coords coord)
+unsigned int collides_with_wall(level *lvl, coords_int coord)
 {
     for(unsigned int i = 0; i < len(lvl->walls); i++) // For each wall
     {
         if (lvl->walls[i].valid) // If it's valid
         {
             // Try to eliminate the possibilty of a collision without calculating all of the pixels
-            if ( (distance(&coord, &lvl->walls[i].edge[0], 'a') < 12) || (distance(&coord, &lvl->walls[i].edge[1], 'a') < 12) )
+            coords_int p0 = coords_to_int(&lvl->walls[i].edge[0]);
+            coords_int p1 = coords_to_int(&lvl->walls[i].edge[1]);
+            if ( (distance(&coord, &p0, 'a') < 12) || (distance(&coord, &p1, 'a') < 12) )
             {
                 struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
                 for(int pixel = 0; pixel < wp.len; pixel++) // if it's valid - for each pixel of said wall
@@ -298,7 +322,7 @@ unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, un
                 }
                 else // If an additional argument is passed
                 {
-                    coords curr_coords = {.x = x - pixel, .y = y - line};
+                    coords_int curr_coords = {.x = x - pixel, .y = y - line};
                     if (mode == 0)
                     {
                         level *lvl = (level*)optional; // lvl is the level optional points to - which it definitely will in my implementation
@@ -331,10 +355,10 @@ unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, un
 #define bmp_collides_wall(lvl, x, y, bmppointer) bmp_actions(lvl, x, y, bmppointer, 0)
 #define bmp_get_pixels(bmp_pixels, x, y, bmppointer) bmp_actions(bmp_pixels, x, y, bmppointer, 1)
 
-uint8_t isVacantForSprite(coords *coordinates, const tinyBitmap *bmp, level *lvl)
+uint8_t isVacantForSprite(coords_int *coordinates, const tinyBitmap *bmp, level *lvl)
 {
-    if (isWithinBounds(coordinates->x, coordinates->y, bmp->big ? 5 : 3, lvl))
-    return !bmp_collides_wall(lvl, coordinates->x, coordinates->y, bmp);
+    if (isWithinBounds(coordinates, bmp->big ? 5 : 3, lvl))
+    return !bmp_collides_wall(lvl, (int)round(coordinates->x), (int)round(coordinates->y), bmp);
     return 0;
 }
 
@@ -350,7 +374,7 @@ uint8_t pixel_lists_have_collision(struct bitmap_pixels *pxbmp0, struct bitmap_p
     return 0; // No collision
 }
 
-uint8_t bmp_collides_with_coords(coords *p, struct bitmap_pixels *pxbmp)
+uint8_t bmp_collides_with_coords(coords_int *p, struct bitmap_pixels *pxbmp)
 {
     struct bitmap_pixels single_p = {.len = 1,.p_array[0] = *p};
     return pixel_lists_have_collision(&single_p, pxbmp);
@@ -369,7 +393,9 @@ uint8_t obj_collides_obj(object *obj0, object *obj1)
 uint8_t character_collides_character(character *c0, character *c1)
 {
     // Attempt elimination of possiblity of collision - if the characters are far enough away then there's no possibility of collision
-    if (distance(&c0->p, &c1->p, 'a') > 10) return 0;
+    coords_int p0 = coords_to_int(&c0->p);
+    coords_int p1 = coords_to_int(&c1->p);
+    if (distance(&p0, &p1, 'a') > 10) return 0;
     // Get the lists of pixels
     struct bitmap_pixels c0_pixels, c1_pixels;
     bmp_get_pixels(&c0_pixels, c0->p.x, c0->p.y, c0->sprite);
@@ -381,7 +407,8 @@ uint8_t character_collides_obj(character *c, object *obj)
 {
     if (!obj->valid) return 0;// Characters can only possibly collide with valid objects
     // Attempt elimination of possiblity of collision - if the characters are far enough away then there's no possibility of collision
-    if (distance(&c->p, &obj->p, 'a') > 10) return 0;
+    coords_int cp = coords_to_int(&c->p);
+    if (distance(&cp, &obj->p, 'a') > 10) return 0;
     // Get the lists of pixels
     struct bitmap_pixels c_pixels, obj_pixels;
     bmp_get_pixels(&c_pixels, c->p.x, c->p.y, c->sprite);
@@ -389,15 +416,18 @@ uint8_t character_collides_obj(character *c, object *obj)
     return pixel_lists_have_collision(&c_pixels, &obj_pixels);
 }
 
-uint8_t isTotallyClearObj(object *obj, level *lvl)
+uint8_t isTotallyClearObj(object *obj, level *lvl, unsigned int strict) // If strict, then even positions near an object will count as too close
 {
     unsigned int vacant = 1;
     for (int i = 0; i < len(lvl->trap); i++)
         {
             if (vacant) vacant = !obj_collides_obj(obj, &lvl->trap[i]);
+            //if (vacant && strict && lvl->trap[i].valid) vacant = distance(&obj->p, &lvl->trap[i].p, 'a') > 10;
             if (vacant) vacant = !obj_collides_obj(obj, &lvl->cheese[i]);
+            //if (vacant && strict && lvl->cheese[i].valid) vacant = distance(&obj->p, &lvl->cheese[i].p, 'a') > 10;
         }
         if (vacant) vacant = !obj_collides_obj(obj, &lvl->door);
+        //if (vacant && strict && lvl->door.valid) vacant = distance(&obj->p, &lvl->door.p, 'a') > 10;
     return vacant;
 }
 
@@ -514,17 +544,20 @@ void tomRandom(struct game *data)
 {
     // Randomly select a direction in the next 2 lines
     tom.angle = rand() % 360;
-    data->characterSpeed = ((rand() % 4) + 3); // Select a random, appropriate speed
+    tom.speedmod = (rand() % 4 + 4) ; // Select a random, appropriate speed modifier - between 4 and 8
+    tom.speedmod /= 10; // Divide by 10 to get appropriate speeds
 }
 
-uint8_t moveCharacterOptions(coords targetCoords, int8_t xoffset, int8_t yoffset, character *c, level *lvl)
+uint8_t moveCharacterTo(coords targetCoords, character *c, level *lvl, struct game *data)
 {
-    if (xoffset != 0 || yoffset != 0) // If no offset is provided (0 in both axes), that means I want absolute movement rather than relative.
-    {
-        targetCoords.x = c->p.x + xoffset; targetCoords.y = c->p.y + yoffset;
-    }
+    coords_int targetCoords_int = coords_to_int(&targetCoords);
     if
-    (isVacantForSprite(&targetCoords, c->sprite, lvl))
+    (
+        isVacantForSprite(&targetCoords_int, c->sprite, lvl) || // Non super jerry check
+        (
+            data->super > 0 && isWithinBounds(&targetCoords_int, c->sprite->big ? 5 : 3, lvl) // Super jerry check (he only needs to be within the play area)
+        )
+    )
     {
         clear_bmp(c->p.x, c->p.y, c->sprite); // Clear the character sprite from the previous position
         c->p=targetCoords;
@@ -533,25 +566,20 @@ uint8_t moveCharacterOptions(coords targetCoords, int8_t xoffset, int8_t yoffset
     return 0; // Movement failed
 }
 
-// Relative movement function
-#define moveCharacter(xoffset, yoffset, c, lvl) moveCharacterOptions(tom.p, xoffset, yoffset, c, lvl) // A copy of Tom's coordinates are just passed as a dummy, they'll be ignored since an offset is provided
-
-// Absolute movement function
-#define moveCharacterTo(coords, c, lvl) moveCharacterOptions(coords, 0, 0, c, lvl) // No offset is provided, causing the movement to be absolute
-
-coords getNextPosition(coords p, double angle, float speed) // For a given slope/vertical line, get the next position.
+coords getNextPosition(coords p, int angle, float speed) // For a given slope/vertical line, get the next position.
 {
     coords output = p;
-    int dx = round(cos(angle));
-    int dy = round(sin(angle));
-    output.x += speed * dx;
-    output.y += speed * dy;
+    double radian = angle * (M_PI / 180);
+    float dx = cos(radian);
+    float dy = sin(radian);
+    output.x += dx * speed;
+    output.y += dy * speed;
     return output;
 }
 
 uint8_t tryMoveFirework(int xoffset, int yoffset, firework *obj, level *lvl)
 {
-    if (isWithinBounds(obj->p.x, obj->p.y, 1, lvl) && !collides_with_wall(lvl, obj->p))
+    if (isWithinBounds(&obj->p, 1, lvl) && !collides_with_wall(lvl, obj->p))
     {
         draw_pixel(obj->p.x, obj->p.y, BG_COLOUR); // Remove the firework from the current position
         // Change the firework's position
@@ -562,7 +590,7 @@ uint8_t tryMoveFirework(int xoffset, int yoffset, firework *obj, level *lvl)
     return 0;
 }
 
-uint8_t moveTowards(char axis, firework *obj, coords *target, level *lvl) // Taken from my assignment 1 (and adapted)
+uint8_t moveTowards(char axis, firework *obj, coords_int *target, level *lvl) // Taken from my assignment 1 (and adapted)
 {
     
     uint8_t successful = 0;
@@ -581,7 +609,7 @@ uint8_t moveTowards(char axis, firework *obj, coords *target, level *lvl) // Tak
 
 void moveFireWorks(level *lvl) // Taken from my assignment 1 (and adapted)
 {
-    coords target = {.x = tom.p.x + 1, .y = tom.p.y + 1}; // Aiming the rockets at tom's centre (as opposed to his origin - top left corner)
+    coords_int target = {.x = (int)round(tom.p.x) + 1, .y = (int)round(tom.p.y) + 1}; // Aiming the rockets at tom's centre (as opposed to his origin - top left corner)
     for (int i = 0; i < len(lvl->rocket); i++)
     {
         if (lvl->rocket[i].valid) // Only bother trying to move valid rockets
@@ -595,7 +623,7 @@ void moveFireWorks(level *lvl) // Taken from my assignment 1 (and adapted)
                 lvl->rocket[i].valid = moveTowards('y', &lvl->rocket[i], &target, lvl);
             }
         }
-    else draw_pixel(lvl->rocket[i].p.x, lvl->rocket[i].p.y, BG_COLOUR); // Remove invalid rockets from the screen
+    else draw_pixel((int)round(lvl->rocket[i].p.x), (int)round(lvl->rocket[i].p.y), BG_COLOUR); // Remove invalid rockets from the screen
     }
 }
 
@@ -613,13 +641,13 @@ coords getStartingCoords(character *character, level *lvl)
     return coordinates;
 }
 
-void respawnCharacter(character *character, level *lvl) // Character respawn - guaranteed to succeed because it'll look in 4 directions until it finds a free spot
+void respawnCharacter(character *character, level *lvl, struct game *data) // Character respawn - guaranteed to succeed because it'll look in 4 directions until it finds a free spot
 {
     unsigned int placed = 0;
-    #define move(target, xoffset, yoffset) ({coords newTarget = {.x = target.x + xoffset, .y = target.y + yoffset};\
+    #define move(target, xoffset, yoffset) ({coords_int newTarget = {.x = target.x + xoffset, .y = target.y + yoffset};\
     if (isVacantForSprite(&newTarget, character->sprite, lvl)) { \
     clear_bmp(character->p.x, character->p.y, character->sprite); \
-    character->p = newTarget; placed = 1;}})
+    character->p.x = newTarget.x; character->p.y = newTarget.y; placed = 1;}})
     int xoffset;
     int yoffset;
     coords target = getStartingCoords(character, lvl);
@@ -633,48 +661,59 @@ void respawnCharacter(character *character, level *lvl) // Character respawn - g
     for (xoffset = 0; !placed && target.x + xoffset > 0 ; xoffset--) // Try spawning right if still occupied
     { move(target, xoffset, 0); }
     #undef move
+    if (character == &tom) tomRandom(data); // If the character being respawned is tom - randomise his movement
 }
 
 void moveTom(level *lvl, struct game *data)
 {
-    coords target = getNextPosition(tom.p, tom.angle, 1);
-    while (!isVacantForSprite(&target, tom.sprite, lvl)) // If the target is not clear for tom to move into
+    coords target = getNextPosition(tom.p, tom.angle, tom.speedmod * data->characterSpeed);
+    unsigned int collided = !moveCharacterTo(target, &tom, lvl, data);
+    for (int i = 0; i < 4; i++) // Try changing direction up to 4 times if it doesn't work
     {
-        tomRandom(data);
+        if (collided) 
+        {
+            tomRandom(data);
+            collided = !moveCharacterTo(target, &tom, lvl, data);
+        }
+        if (collided) tomRandom(data);
     }
-    clear_bmp(tom.p.x, tom.p.y, tom.sprite);
-    tom.p = target;
+}
+
+void wrapWall(wall *w)
+{
+    // Left to right
+    if (w->edge[0].x < 0) {w->edge[0].x += LCD_X; w->edge[1].x += LCD_X;}
+    // Right to left
+    else if (w->edge[0].x > LCD_X) {w->edge[0].x -= LCD_X; w->edge[1].x -= LCD_X;}
+    // Top to bottom
+    if (w->edge[0].y < STATUS_BAR_HEIGHT) {w->edge[0].y += LCD_Y - STATUS_BAR_HEIGHT; w->edge[1].y += LCD_Y-STATUS_BAR_HEIGHT;}
+    // Bottom to top
+    if (w->edge[0].y > LCD_Y) {w->edge[0].y -= LCD_Y - STATUS_BAR_HEIGHT; w->edge[1].y -= LCD_Y-STATUS_BAR_HEIGHT;}
 }
 
 void moveWalls(level *lvl, struct game *data)
 {
     for (int i = 0; i < len(lvl->walls); i++) if (lvl->walls[i].valid) // For each valid wall
     {
-        if // If any of the walls is entirely outside of the play area, wrap the actual cooridnates around?
+        coords_int edge0 = coords_to_int(&lvl->walls[i].edge[0]);
+        coords_int edge1 = coords_to_int(&lvl->walls[i].edge[1]);
+        if // If any of the walls is entirely outside of the play area, edge cooridnates around so that they never exceed the capacity of a float
         (
-            !(
-            lvl->walls[i].edge[0].x &&
-            lvl->walls[i].edge[0].y &&
-            lvl->walls[i].edge[1].x &&
-            lvl->walls[i].edge[1].y
-            )
+            !isWithinBounds(&edge0, 1, lvl) &&
+            !isWithinBounds(&edge1, 1, lvl)
         )
         {
-            lvl->walls[i].edge[0].x = lvl->walls[i].edge[0].x % LCD_X;
-            lvl->walls[i].edge[0].y = ((lvl->walls[i].edge[0].y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
-            lvl->walls[i].edge[1].x = lvl->walls[i].edge[1].x % LCD_X;
-            lvl->walls[i].edge[0].y = ((lvl->walls[i].edge[1].y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+            wrapWall(&lvl->walls[i]);
         }
         // Undraw the wall from its current position
         struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
         for(int wallPixel = 0; wallPixel < wp.len; wallPixel++) // For each of its' pixels
-        if (wp.wallCoords[wallPixel].y >= 10) // If within play area
-        {
-            draw_pixel(wp.wallCoords[wallPixel].x, wp.wallCoords[wallPixel].y, BG_COLOUR); // Clear it
-        }
-        // Move both its edges in a perpendicular line
-        lvl->walls[i].edge[0] = getNextPosition(lvl->walls[i].edge[0], lvl->walls[i].angle, data->wallSpeed);
-        lvl->walls[i].edge[1] = getNextPosition(lvl->walls[i].edge[1], lvl->walls[i].angle, data->wallSpeed);
+        draw_pixel((int)wp.wallCoords[wallPixel].x, (int)wp.wallCoords[wallPixel].y, BG_COLOUR); // Clear it
+        // Move both its edges in a line perpendicular to the wall's angle
+        lvl->walls[i].edge[0] = getNextPosition(lvl->walls[i].edge[0], lvl->walls[i].angle + 90, data->wallSpeed);
+        lvl->walls[i].edge[1] = getNextPosition(lvl->walls[i].edge[1], lvl->walls[i].angle + 90, data->wallSpeed);
+        wp = get_wallCoords(&lvl->walls[i]);
+        draw_wall(&wp);
     }
 }
 
@@ -684,7 +723,7 @@ void fireFirework(level *lvl, struct game *data) // Taken from my first assignme
     {
         if (!lvl->rocket[i].valid) 
             {
-                lvl->rocket[i].p = jerry.p;
+                lvl->rocket[i].p = coords_to_int(&jerry.p);
                 lvl->rocket[i].valid = 1;
                 break;
             }
@@ -693,10 +732,10 @@ void fireFirework(level *lvl, struct game *data) // Taken from my first assignme
 
 void readControls(level *lvl, struct game *data)
 {
-    if (input[joyLeft].switchClosed) moveCharacter(-1, 0, &jerry, lvl);
-    if (input[joyRight].switchClosed) moveCharacter(1, 0, &jerry, lvl);
-    if (input[joyUp].switchClosed) moveCharacter(0, -1, &jerry, lvl);
-    if (input[joyDown].switchClosed) moveCharacter(0, 1, &jerry, lvl);
+    if (input[joyLeft].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 180, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyRight].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 0, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyUp].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 270, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyDown].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 90, data->characterSpeed), &jerry, lvl, data);
     if (input[joyPress].switchClosed && !input[joyPress].press_handled) // Once per joystick press
     { fireFirework(lvl, data); input[joyPress].press_handled = 1; }
     if (input[buttonL].switchClosed && !input[buttonL].press_handled)
@@ -710,13 +749,23 @@ void checkCollisions(level *lvl, struct game *data)
 {
     if (character_collides_character(&tom, &jerry))
     {
-        respawnCharacter(&jerry, lvl);
-        respawnCharacter(&tom, lvl);
-        data->lives--;
+        if (data->super == 0) // Normal jerry respawns and loses a life
+        {
+            respawnCharacter(&jerry, lvl, data);
+            data->lives--;
+        }
+        else data->score++; // Super jerry just gains points
+        respawnCharacter(&tom, lvl, data);
     }
     if (character_collides_obj(&jerry, &lvl->door))
     {
         lvl->finished = 1; // Exit the current level
+    }
+    if (character_collides_obj(&jerry, &lvl->milk) && !data->super)
+    {
+        data->super = 10; // Exit the current level
+        lvl->milk.valid = 0;
+        clear_bmp(lvl->milk.p.x, lvl->milk.p.y, lvl->milk.sprite);
     }
     for (int i = 0; i < len(lvl->cheese); i++) // For each cheese and trap
     {
@@ -727,16 +776,17 @@ void checkCollisions(level *lvl, struct game *data)
             lvl->cheese[i].valid = 0;
             clear_bmp(lvl->cheese[i].p.x, lvl->cheese[i].p.y, lvl->cheese[i].sprite);
         }
-        if (character_collides_obj(&jerry, &lvl->trap[i])) // Handling trap collision
+        if (character_collides_obj(&jerry, &lvl->trap[i]) && !data->super) // Handling trap collision
         {
             data->lives--;
             lvl->trap[i].valid = 0;
             clear_bmp(lvl->trap[i].p.x, lvl->trap[i].p.y, lvl->trap[i].sprite);
         }
     }
-    if (bmp_collides_wall(lvl, jerry.p.x, jerry.p.y, jerry.sprite)) // If a character is caught in the moving walls, respawn it
+    if (bmp_collides_wall(lvl, jerry.p.x, jerry.p.y, jerry.sprite) && !data->super) // If jerry is caught in the moving walls, respawn it
     {
-        respawnCharacter(&jerry, lvl);
+        respawnCharacter(&jerry, lvl, data);
+
     }
     struct bitmap_pixels tom_pixels;
     bmp_get_pixels(&tom_pixels, tom.p.x, tom.p.y, tom.sprite);
@@ -744,16 +794,16 @@ void checkCollisions(level *lvl, struct game *data)
     {
         if (lvl->rocket[i].valid && bmp_collides_with_coords(&lvl->rocket[i].p, &tom_pixels)) // If tom collides with a firework
         {
-            respawnCharacter(&tom, lvl);
+            respawnCharacter(&tom, lvl, data);
             lvl->rocket[i].valid = 0;
             data->score++;
         }
     }
-    for (int i = 0; i < tom_pixels.len; i++) // For each of tom's pixels (since that's already being calculated for the fireworks collisions)
+    for (int i = 0; i < tom_pixels.len; i++) // For each of tom's pixels (since that's already been calculated for the fireworks collisions)
     {
         if (collides_with_wall(lvl, tom_pixels.p_array[i]))
         {
-            respawnCharacter(&tom, lvl);
+            respawnCharacter(&tom, lvl, data);
             break; // Stop searching for wall collisions after the respawn
         }
     }
@@ -827,17 +877,16 @@ void levelInit(struct game *data, level *thisLevel)
         usb_init(); // Enable serial
         levelInitUSB(thisLevel, data); // Initialise level from USB
     }
-    // Calculate wall movement angles (on levelinit)
+    // Calculate walls' angles (on levelinit, since walls don't rotate during gameplay)
     for(int i = 0; i < len(thisLevel->walls); i++)
     {
         wall *currWall = &thisLevel->walls[i];
-        // Calculate the perpendicular to the wall's slope
-        double slope = -1 / ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
-        currWall->angle = atan(slope);
+        double slope = ( (currWall->edge[1].y) - (currWall->edge[0].y) ) / ( (currWall->edge[1].x) - (currWall->edge[0].x) );
+        currWall->angle = round(atan(slope) * 180/M_PI);
     }
     // Regardless of which level it is - move tom and Jerry to their starting positions
-    respawnCharacter(&jerry, thisLevel);
-    respawnCharacter(&tom, thisLevel);
+    respawnCharacter(&jerry, thisLevel, data);
+    respawnCharacter(&tom, thisLevel, data);
     // Initilaise objects
     for(int i = 0; i < 5; i++)
     {
@@ -846,6 +895,7 @@ void levelInit(struct game *data, level *thisLevel)
     }
     for(int i = 0; i < 20; i++) thisLevel->rocket[i].valid = 0;
     thisLevel->door = makeDef(&doorBMP);
+    thisLevel->milk = makeDef(&milkBMP);
     clear_screen(); // Remove everything in preparation for the next level
 }
 
@@ -853,13 +903,14 @@ void placeObj(level *lvl, object *obj)
 {
     // Generate a random target location (within play area)
     unsigned int size = obj->sprite->big ? 5 : 3;
-    coords target;
+    coords_int target;
     target.x = rand() % LCD_X; target.y = ( rand() % (LCD_Y - STATUS_BAR_HEIGHT) ) + STATUS_BAR_HEIGHT;
     // Keep on generating random locations until a vacant one is found
-    while(!isWithinBounds(target.x, target.y, size, lvl) || 
-    !isVacantForSprite(&target, obj->sprite, lvl) || 
-    !isTotallyClearObj(obj, lvl) ||
-    distance(&target, &tom.p, 'a') < 10) // Don't place the cheese too close to tom
+    while ( // Only place in the target if the following are all false:
+        !isWithinBounds(&target, size, lvl) || 
+        !isVacantForSprite(&target, obj->sprite, lvl) || 
+        !isTotallyClearObj(obj, lvl, 1)
+    )
     {
         target.x = rand() % LCD_X; target.y = ( rand() % (LCD_Y - STATUS_BAR_HEIGHT) ) + STATUS_BAR_HEIGHT;
     }
@@ -878,17 +929,16 @@ void placeCheese(level *lvl)
     // If a vacant cheese slot isn't found, nothing is done.
 }
 
-void placeTrapAttempt(level *lvl)
+void placeObjAttempt(object *obj, level *lvl)
 {
-    for (int i = 0; i < len(lvl->trap); i++) // For each potential cheese
-    if (!lvl->trap[i].valid) // Try to find a vacant trap slot (effectively limiting the max number of traps in a level to 5)
+    if (!obj->valid) // Try to find a vacant slot (effectively limiting the max number of objects in a level)
     {
-        object target = {.p = tom.p, .valid = 1, .sprite = &trapBMP}; // Create a virtual object at the target location
-        if (isTotallyClearObj(&target, lvl)) 
+        object target = {.p = coords_to_int(&tom.p), .valid = 1, .sprite = obj->sprite}; // Create a virtual object at the target location
+        if (isTotallyClearObj(&target, lvl, 0) && isWithinBounds(&target.p, target.sprite->big ? 5 : 3, lvl)) 
         {
-            lvl->trap[i].p = tom.p; 
-            lvl->trap[i].valid = 1;
-        } // Place a trap at tom's position if free
+            obj->p = coords_to_int(&tom.p);
+            obj->valid = 1;
+        } // Place an object at tom's position if free
         return; // Stop searching as soon as a vacant slot is found
     }
 }
@@ -897,16 +947,20 @@ void timed_events(level *lvl, struct game *data)
 {
     if (times.secondPassed)
     {
-        if (data->super > 0) data->super--; //Tick down the super timer every second
-        //moveWalls(lvl, data); // Wall movement
-        if (times.time % 2 == 0) placeCheese(lvl);
-        if (times.time % 3 == 0) placeTrapAttempt(lvl);
+        //if (data->super == 10) jerry.sprite = &superJerryBMP;
+        if (data->super > 0) {data->super--;} //Tick down the super timer every second
+        if (times.time > 0) // Objects should not be placed during the 0th second
+        {
+            if (times.time % 2 == 0) placeCheese(lvl);
+            if (times.time % 3 == 0) for(int i = 0; i < len(lvl->trap); i++) placeObjAttempt(&lvl->trap[i], lvl);
+            if (times.time % 5 == 0 && data->level > 1) placeObjAttempt(&lvl->milk, lvl);
+        }
         times.secondPassed = 0; // Reset secondPassed, since the events for this second have now already been completed
     }
-    int speed = floor(3*data->characterSpeed);
     if (times.secondFragmentPassed)
     {
-        if (times.secondFragments % speed == 0) moveTom(lvl, data);
+        if(data->wallSpeed != 0) moveWalls(lvl, data); // No point in trying to move the walls if wallspeed is equal to 0
+        moveTom(lvl, data);
         times.secondFragmentPassed = 0;
     }
 }
@@ -915,20 +969,6 @@ void draw_statusbar(level *lvl, struct game *data)
 {
     draw_formatted(0, 0, "LV%d|L%d|S%02d|%02d:", data->level, data->lives, data->score, times.time / 60);
     draw_formatted(69, 0, "%02d", times.time%60);
-}
-
-void draw_walls(level *level, unsigned int show)
-{
-    for (int i = 0; i < len(level->walls); i++) if (level->walls[i].valid)// For each valid wall
-    {
-        //draw_formatted(i * 20, 10, "%d|%d", i, level->walls[i].bresen.vert);
-        struct wallPixels wp = get_wallCoords(&level->walls[i]);
-        for(int wallPixel = 0; wallPixel < wp.len; wallPixel++) // For each of its' pixels
-        if (wp.wallCoords[wallPixel].y >= 10) // If within play area
-        {
-            draw_pixel(wp.wallCoords[wallPixel].x, wp.wallCoords[wallPixel].y, show ? FG_COLOUR : BG_COLOUR); // Either draw or clear it (depending on the whether show is set or not)
-        }
-    }
 }
 
 void draw_objects(level *level)
@@ -941,10 +981,11 @@ void draw_objects(level *level)
         if (level->trap[i].valid) draw_bmp(level->trap[i].p.x, level->trap[i].p.y, level->trap[i].sprite);
     }
     if (level->door.valid) draw_bmp(level->door.p.x, level->door.p.y, level->door.sprite);
+    if (level->milk.valid) draw_bmp(level->milk.p.x, level->milk.p.y, level->milk.sprite);
     for (int i = 0; i < len(level->rocket); i++)
     if (level->rocket[i].valid) // Only attempt to draw valid rockets
     {
-        coords rocketCoords = level->rocket[i].p;
+        coords_int rocketCoords = level->rocket[i].p;
         draw_pixel(rocketCoords.x, rocketCoords.y, FG_COLOUR);
     }
 }
@@ -954,7 +995,7 @@ void process(struct game *data, level *level) // Game tick
 {
     debounce_process();
     if (data->lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
-    if (!IS_GAME_PAUSED && times.time > 0) timed_events(level, data); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
+    if (!IS_GAME_PAUSED) timed_events(level, data); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
     static int scaler = 0; // Establish a scaler for use with the moveFireWorks function
     increment(&scaler, 1, 2); if (scaler == 0 && !IS_GAME_PAUSED)
     moveFireWorks(level);
@@ -963,7 +1004,6 @@ void process(struct game *data, level *level) // Game tick
     readControls(level, data);
     checkCollisions(level, data);
     draw_statusbar(level, data);
-    draw_walls(level, 1); // Redraw the walls
     draw_objects(level);
     if (!data->done) show_screen();
 }
@@ -976,7 +1016,7 @@ void game() // Run a game
     gameData.done = 0;
     gameData.score = 0;
     gameData.characterSpeed = 1;
-    gameData.wallSpeed = 2;
+    gameData.wallSpeed = 0.2;
     gameData.lives = 5;
     gameData.super = 0;
     // Reset the time and unpause (in case the previous game was paused), also, reset the second indicator
