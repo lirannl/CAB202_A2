@@ -58,19 +58,14 @@ typedef struct // 2 bytes
     int y;
 } coords;
 
-struct bresenhaming // 3 bytes
-{
-    float derr;
-    float err;
-    uint8_t reverseDir:1;
-    uint8_t vert:1;
-};
+// dx = cos()
+// dy = sin()
 
 typedef struct // 8 bytes
 {
     coords edge[2]; // 4 bytes
     uint8_t valid;
-    struct bresenhaming bresen;
+    double angle;
 } wall;
 
 struct wallPixels // 49 bytes
@@ -91,7 +86,7 @@ typedef struct
 {
     coords p;
     tinyBitmap *sprite;
-    struct bresenhaming bresen;
+    double angle;
 } character;
 character tom = {.sprite = &tomBMP};
 character jerry = {.sprite = &jerryBMP};
@@ -285,6 +280,7 @@ unsigned int collides_with_wall(level *lvl, coords coord)
 unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, unsigned int mode)
 {
     unsigned int collision = 0;
+    if (bmp == &superJerryBMP) return collision; // Super jerry never collides with walls (he can go through them), no point in checking
     unsigned int pixels_count = 0;
     uint32_t image = bmp->image;
     int size = (bmp->big) ? 5 : 3; // Big bmps are 5x5, non-big bmps are 3x3
@@ -517,9 +513,7 @@ ISR(TIMER1_OVF_vect) { // Timer 1 overflows - increment game time
 void tomRandom(struct game *data)
 {
     // Randomly select a direction in the next 2 lines
-    tom.bresen.reverseDir = (rand() % 2 == 0);
-    tom.bresen.derr = ((rand() % 2 == 0) ? 1 : -1) * ((rand() % 12) + 1);
-    tom.bresen.derr /= 4;
+    tom.angle = rand() % 360;
     data->characterSpeed = ((rand() % 4) + 3); // Select a random, appropriate speed
 }
 
@@ -545,24 +539,13 @@ uint8_t moveCharacterOptions(coords targetCoords, int8_t xoffset, int8_t yoffset
 // Absolute movement function
 #define moveCharacterTo(coords, c, lvl) moveCharacterOptions(coords, 0, 0, c, lvl) // No offset is provided, causing the movement to be absolute
 
-coords getNextPosition(coords p, struct bresenhaming *bresen) // For a given slope/vertical line, get the next position.
+coords getNextPosition(coords p, double angle) // For a given slope/vertical line, get the next position.
 {
-    float slope = bresen->derr;
-    int direction = bresen->reverseDir ? -1 : 1;
     coords output = p;
-    if (bresen->vert) {output.x = p.x; output.y = p.y+direction;} // Manually handling vertical lines since there's no mathematical expression for their slope
-    else // slope is relevant
-    {
-        // The bresenhaming algorithm from draw_wall, adapted to work for a single iteration with a slope
-        if ( bresen->err >= 0.5 ) { 
-				output.y += direction;
-				bresen->err -= 1.0;
-			}
-        else {
-			output.x += direction;
-			bresen->err += slope;
-		}
-    }
+    int dx = round(cos(angle));
+    int dy = round(sin(angle));
+    output.x += dx;
+    output.y += dy;
     return output;
 }
 
@@ -654,7 +637,7 @@ void respawnCharacter(character *character, level *lvl) // Character respawn - g
 
 void moveTom(level *lvl, struct game *data)
 {
-    coords target = getNextPosition(tom.p, &tom.bresen);
+    coords target = getNextPosition(tom.p, tom.angle);
     if (!isVacantForSprite(&target, tom.sprite, lvl)) // If the target is not clear for tom to move into
     {
         tomRandom(data);
@@ -781,7 +764,7 @@ void startingScreen()
     draw_string(0, 10, "n10446711", FG_COLOUR);
     draw_string(0, 20, "TJ", FG_COLOUR);
     show_screen();
-    long seed = 0;
+    long seed = 98123456;
     while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) {debounce_process(); seed++;} // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
     srand(seed); // Seed rand() based on the exact time the user pressed the right button to exit the starting screen
@@ -842,20 +825,13 @@ void levelInit(struct game *data, level *thisLevel)
         usb_init(); // Enable serial
         levelInitUSB(thisLevel, data); // Initialise level from USB
     }
-    // Calculate wall slopes (on levelinit)
+    // Calculate wall movement angles (on levelinit)
     for(int i = 0; i < len(thisLevel->walls); i++)
     {
         wall *currWall = &thisLevel->walls[i];
-        currWall->bresen.err = 0;
-        currWall->bresen.reverseDir = (rand() % 2 == 0); // Select a direction randomly, since I'm not implementing ADC
-        if ( (currWall->edge[1].x) != (currWall->edge[0].x) ) // If the edge's x values aren't equal (non vertical wall)
         // Calculate the perpendicular to the wall's slope
-        currWall->bresen.derr = 1 / ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
-        else // Vertical wall
-        {
-            currWall->bresen.vert = 1; currWall->bresen.derr = 0;
-        }
-        
+        double slope = -1 / ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
+        currWall->angle = atan(slope);
     }
     // Regardless of which level it is - move tom and Jerry to their starting positions
     respawnCharacter(&jerry, thisLevel);
@@ -919,6 +895,7 @@ void timed_events(level *lvl, struct game *data)
 {
     if (times.secondPassed)
     {
+        if (data->super > 0) data->super--; //Tick down the super timer every second
         if (times.time % 2 == 0) placeCheese(lvl);
         if (times.time % 3 == 0) placeTrapAttempt(lvl);
         times.secondPassed = 0; // Reset secondPassed, since the events for this second have now already been completed
