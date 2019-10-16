@@ -131,8 +131,8 @@ struct game
     uint8_t score;
     unsigned int lives : 3;
     unsigned int super : 5;
-    volatile uint8_t wallSpeed;
-    volatile uint8_t characterSpeed;
+    volatile float wallSpeed;
+    volatile float characterSpeed;
     uint8_t done :1;
 };
 
@@ -539,13 +539,13 @@ uint8_t moveCharacterOptions(coords targetCoords, int8_t xoffset, int8_t yoffset
 // Absolute movement function
 #define moveCharacterTo(coords, c, lvl) moveCharacterOptions(coords, 0, 0, c, lvl) // No offset is provided, causing the movement to be absolute
 
-coords getNextPosition(coords p, double angle) // For a given slope/vertical line, get the next position.
+coords getNextPosition(coords p, double angle, float speed) // For a given slope/vertical line, get the next position.
 {
     coords output = p;
     int dx = round(cos(angle));
     int dy = round(sin(angle));
-    output.x += dx;
-    output.y += dy;
+    output.x += speed * dx;
+    output.y += speed * dy;
     return output;
 }
 
@@ -637,8 +637,8 @@ void respawnCharacter(character *character, level *lvl) // Character respawn - g
 
 void moveTom(level *lvl, struct game *data)
 {
-    coords target = getNextPosition(tom.p, tom.angle);
-    if (!isVacantForSprite(&target, tom.sprite, lvl)) // If the target is not clear for tom to move into
+    coords target = getNextPosition(tom.p, tom.angle, 1);
+    while (!isVacantForSprite(&target, tom.sprite, lvl)) // If the target is not clear for tom to move into
     {
         tomRandom(data);
     }
@@ -648,14 +648,16 @@ void moveTom(level *lvl, struct game *data)
 
 void moveWalls(level *lvl, struct game *data)
 {
-    /*for (int i = 0; i < len(lvl->walls); i++) if (lvl->walls[i].valid) // For each valid wall
+    for (int i = 0; i < len(lvl->walls); i++) if (lvl->walls[i].valid) // For each valid wall
     {
-        if // If any of the walls' edges is out far enough that it definitely fully wrapped around
+        if // If any of the walls is entirely outside of the play area, wrap the actual cooridnates around?
         (
-            lvl->walls[i].edge[0].x > LCD_X + 24 ||
-            lvl->walls[i].edge[0].y > LCD_Y + 24 ||
-            lvl->walls[i].edge[1].x > LCD_X + 24 ||
-            lvl->walls[i].edge[1].y > LCD_Y + 24
+            !(
+            lvl->walls[i].edge[0].x &&
+            lvl->walls[i].edge[0].y &&
+            lvl->walls[i].edge[1].x &&
+            lvl->walls[i].edge[1].y
+            )
         )
         {
             lvl->walls[i].edge[0].x = lvl->walls[i].edge[0].x % LCD_X;
@@ -671,9 +673,9 @@ void moveWalls(level *lvl, struct game *data)
             draw_pixel(wp.wallCoords[wallPixel].x, wp.wallCoords[wallPixel].y, BG_COLOUR); // Clear it
         }
         // Move both its edges in a perpendicular line
-        lvl->walls[i].edge[0] = getNextPosition(lvl->walls[i].edge[0], &lvl->walls[i].bresen);
-        lvl->walls[i].edge[1] = getNextPosition(lvl->walls[i].edge[1], &lvl->walls[i].bresen);
-    }*/
+        lvl->walls[i].edge[0] = getNextPosition(lvl->walls[i].edge[0], lvl->walls[i].angle, data->wallSpeed);
+        lvl->walls[i].edge[1] = getNextPosition(lvl->walls[i].edge[1], lvl->walls[i].angle, data->wallSpeed);
+    }
 }
 
 void fireFirework(level *lvl, struct game *data) // Taken from my first assignment
@@ -896,14 +898,15 @@ void timed_events(level *lvl, struct game *data)
     if (times.secondPassed)
     {
         if (data->super > 0) data->super--; //Tick down the super timer every second
+        //moveWalls(lvl, data); // Wall movement
         if (times.time % 2 == 0) placeCheese(lvl);
         if (times.time % 3 == 0) placeTrapAttempt(lvl);
         times.secondPassed = 0; // Reset secondPassed, since the events for this second have now already been completed
     }
+    int speed = floor(3*data->characterSpeed);
     if (times.secondFragmentPassed)
     {
-        if (times.secondFragments % data->characterSpeed == 0) moveTom(lvl, data);
-        if (times.secondFragments % data->wallSpeed == 0) moveWalls(lvl, data); // Wall movement
+        if (times.secondFragments % speed == 0) moveTom(lvl, data);
         times.secondFragmentPassed = 0;
     }
 }
@@ -973,7 +976,7 @@ void game() // Run a game
     gameData.done = 0;
     gameData.score = 0;
     gameData.characterSpeed = 1;
-    gameData.wallSpeed = 16;
+    gameData.wallSpeed = 2;
     gameData.lives = 5;
     gameData.super = 0;
     // Reset the time and unpause (in case the previous game was paused), also, reset the second indicator
