@@ -580,7 +580,6 @@ uint8_t tryMoveFirework(int xoffset, int yoffset, firework *obj, level *lvl)
 {
     if (isWithinBounds(&obj->p, 1, lvl) && !collides_with_wall(lvl, obj->p))
     {
-        draw_pixel(obj->p.x, obj->p.y, BG_COLOUR); // Remove the firework from the current position
         // Change the firework's position
         obj->p.x += xoffset;
         obj->p.y += yoffset;
@@ -785,7 +784,7 @@ void checkCollisions(level *lvl, struct game *data)
     if (bmp_collides_wall(lvl, jerry.p.x, jerry.p.y, jerry.sprite) && !data->super) // If jerry is caught in the moving walls, respawn it
     {
         respawnCharacter(&jerry, lvl, data);
-
+        data->lives--; // Might be removed depending on how difficult it is
     }
     struct bitmap_pixels tom_pixels;
     bmp_get_pixels(&tom_pixels, tom.p.x, tom.p.y, tom.sprite);
@@ -994,7 +993,12 @@ void draw_objects(level *level)
     if (level->rocket[i].valid) // Only attempt to draw valid rockets
     {
         coords_int rocketCoords = level->rocket[i].p;
-        draw_pixel(rocketCoords.x, rocketCoords.y, FG_COLOUR);
+        // Remove the pixels around each firework
+        draw_pixel(rocketCoords.x + 1, rocketCoords.y, BG_COLOUR);
+        draw_pixel(rocketCoords.x - 1, rocketCoords.y, BG_COLOUR);
+        draw_pixel(rocketCoords.x, rocketCoords.y + 1, BG_COLOUR);
+        draw_pixel(rocketCoords.x, rocketCoords.y - 1, BG_COLOUR);
+        draw_pixel(rocketCoords.x, rocketCoords.y, FG_COLOUR); // Draw the firework
     }
 }
 
