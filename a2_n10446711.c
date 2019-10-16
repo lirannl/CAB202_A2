@@ -304,7 +304,6 @@ unsigned int collides_with_wall(level *lvl, coords_int coord)
 unsigned int bmp_actions(void *optional, int x, int y, const tinyBitmap *bmp, unsigned int mode)
 {
     unsigned int collision = 0;
-    if (bmp == &superJerryBMP) return collision; // Super jerry never collides with walls (he can go through them), no point in checking
     unsigned int pixels_count = 0;
     uint32_t image = bmp->image;
     int size = (bmp->big) ? 5 : 3; // Big bmps are 5x5, non-big bmps are 3x3
@@ -947,8 +946,17 @@ void timed_events(level *lvl, struct game *data)
 {
     if (times.secondPassed)
     {
-        //if (data->super == 10) jerry.sprite = &superJerryBMP;
-        if (data->super > 0) {data->super--;} //Tick down the super timer every second
+        if (data->super == 10) {jerry.sprite = &superJerryBMP; clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &jerryBMP);} // If super mode started, switch Jerry's sprite to super jerry
+        // Tick down the super timer every second and if super mode is over, switch the sprite back to normal jerry
+        if (data->super > 0) 
+        {
+            data->super--; 
+            if (data->super == 0) 
+            {
+                jerry.sprite = &jerryBMP;
+                clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &superJerryBMP);
+            }
+        }
         if (times.time > 0) // Objects should not be placed during the 0th second
         {
             if (times.time % 2 == 0) placeCheese(lvl);
