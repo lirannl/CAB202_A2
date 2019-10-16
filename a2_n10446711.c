@@ -50,6 +50,7 @@ tinyBitmap superJerryBMP = {.big = 1, .image = 0b1111100100001000010011000};
 tinyBitmap cheeseBMP = {.big = 0, .image = 0b0000000100010100111000000};
 tinyBitmap doorBMP = {.big = 1, .image = 0b0111001010010100101001110};
 tinyBitmap trapBMP = {.big = 0, .image = 0b0000001110000000111000000};
+tinyBitmap milkBMP = {.big = 1, .image = 0b0000010001100010111000000};
 
 typedef struct // 2 bytes
 { 
@@ -186,10 +187,12 @@ uint8_t isWithinBounds(uint8_t x, uint8_t y, uint8_t size, level *lvl) // Is thi
     return 0;
 }
 
-unsigned int distance(coords *p0, coords *p1, char axis) // Distance calculation program
+unsigned int distance(coords *p0, coords *p1, char axis) // Distance calculation function
 {
-    unsigned int dx = (p0->x > p1->x ? -1 : 1) * (p1->x-p0->x);
-    unsigned int dy = (p0->y > p1->y ? -1 : 1) * (p1->y-p0->y);
+    int p0y_wrapped = ((p0->y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+    int p1y_wrapped = ((p1->y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+    unsigned int dx = (p0->x > p1->x ? -1 : 1) * (p1->x % LCD_X - p0->x % LCD_X);
+    unsigned int dy = (p0->y > p1->y ? -1 : 1) * (p1y_wrapped - p0y_wrapped);
     if (axis == 'x') return dx;
     else if (axis == 'y') return dy;
     return dx + dy;
@@ -402,17 +405,6 @@ uint8_t isTotallyClearObj(object *obj, level *lvl)
     return vacant;
 }
 
-/*coords getNextPosition(coords p, double slope, int8_t vert) // For a given slope/vertical line, get the next position.
-{
-    coords output = p;
-    if (vert != 0) {output.x = p.x; output.y = p.y+vert;} // Manually handling vertical lines since there's no mathematical expression for their
-    else // slope is relevant 
-    {
-
-    }
-    return output;
-}*/
-
 void ddrSetup()
 {
     SET_INPUT(DDRB, PIN0); // Centre
@@ -557,7 +549,6 @@ coords getNextPosition(coords p, struct bresenhaming *bresen) // For a given slo
 {
     float slope = bresen->derr;
     int direction = bresen->reverseDir ? -1 : 1;
-    //if (slope != 0) slope = 1/slope; // get a perpendicular slope to the one provided
     coords output = p;
     if (bresen->vert) {output.x = p.x; output.y = p.y+direction;} // Manually handling vertical lines since there's no mathematical expression for their slope
     else // slope is relevant
@@ -672,6 +663,36 @@ void moveTom(level *lvl, struct game *data)
     tom.p = target;
 }
 
+void moveWalls(level *lvl, struct game *data)
+{
+    /*for (int i = 0; i < len(lvl->walls); i++) if (lvl->walls[i].valid) // For each valid wall
+    {
+        if // If any of the walls' edges is out far enough that it definitely fully wrapped around
+        (
+            lvl->walls[i].edge[0].x > LCD_X + 24 ||
+            lvl->walls[i].edge[0].y > LCD_Y + 24 ||
+            lvl->walls[i].edge[1].x > LCD_X + 24 ||
+            lvl->walls[i].edge[1].y > LCD_Y + 24
+        )
+        {
+            lvl->walls[i].edge[0].x = lvl->walls[i].edge[0].x % LCD_X;
+            lvl->walls[i].edge[0].y = ((lvl->walls[i].edge[0].y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+            lvl->walls[i].edge[1].x = lvl->walls[i].edge[1].x % LCD_X;
+            lvl->walls[i].edge[0].y = ((lvl->walls[i].edge[1].y - STATUS_BAR_HEIGHT) % (LCD_Y - STATUS_BAR_HEIGHT)) + STATUS_BAR_HEIGHT;
+        }
+        // Undraw the wall from its current position
+        struct wallPixels wp = get_wallCoords(&lvl->walls[i]);
+        for(int wallPixel = 0; wallPixel < wp.len; wallPixel++) // For each of its' pixels
+        if (wp.wallCoords[wallPixel].y >= 10) // If within play area
+        {
+            draw_pixel(wp.wallCoords[wallPixel].x, wp.wallCoords[wallPixel].y, BG_COLOUR); // Clear it
+        }
+        // Move both its edges in a perpendicular line
+        lvl->walls[i].edge[0] = getNextPosition(lvl->walls[i].edge[0], &lvl->walls[i].bresen);
+        lvl->walls[i].edge[1] = getNextPosition(lvl->walls[i].edge[1], &lvl->walls[i].bresen);
+    }*/
+}
+
 void fireFirework(level *lvl, struct game *data) // Taken from my first assignment
 {
     if (data->score >= 3) for (int i = 0; i < len(lvl->rocket); i++) // Before fireworks are enabled, the only way to gain score is by eating cheese
@@ -728,6 +749,10 @@ void checkCollisions(level *lvl, struct game *data)
             clear_bmp(lvl->trap[i].p.x, lvl->trap[i].p.y, lvl->trap[i].sprite);
         }
     }
+    if (bmp_collides_wall(lvl, jerry.p.x, jerry.p.y, jerry.sprite)) // If a character is caught in the moving walls, respawn it
+    {
+        respawnCharacter(&jerry, lvl);
+    }
     struct bitmap_pixels tom_pixels;
     bmp_get_pixels(&tom_pixels, tom.p.x, tom.p.y, tom.sprite);
     for (int i = 0; i < len(lvl->rocket); i++) // For each firework rocket
@@ -737,6 +762,14 @@ void checkCollisions(level *lvl, struct game *data)
             respawnCharacter(&tom, lvl);
             lvl->rocket[i].valid = 0;
             data->score++;
+        }
+    }
+    for (int i = 0; i < tom_pixels.len; i++) // For each of tom's pixels (since that's already being calculated for the fireworks collisions)
+    {
+        if (collides_with_wall(lvl, tom_pixels.p_array[i]))
+        {
+            respawnCharacter(&tom, lvl);
+            break; // Stop searching for wall collisions after the respawn
         }
     }
 }
@@ -771,7 +804,7 @@ void levelInitUSB(level *lvl, struct game *data)
     draw_string(0, 0, "Please enter next", FG_COLOUR);
     draw_string(0, 10, "level via serial", FG_COLOUR);
     show_screen();
-    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) debounce_process(); // Wait until buttonR is pressed
+    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled) || usb_serial_getchar() == 'a') debounce_process(); // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
     data->done = 1; // Game completed - finish game and start a new one
 }
@@ -807,9 +840,6 @@ void levelInit(struct game *data, level *thisLevel)
     if (data->level == 2) // Specifically after level 1 - enable USB serial
     {
         usb_init(); // Enable serial
-    }
-    if (data->level > 1) // After level 1
-    {
         levelInitUSB(thisLevel, data); // Initialise level from USB
     }
     // Calculate wall slopes (on levelinit)
@@ -818,9 +848,9 @@ void levelInit(struct game *data, level *thisLevel)
         wall *currWall = &thisLevel->walls[i];
         currWall->bresen.err = 0;
         currWall->bresen.reverseDir = (rand() % 2 == 0); // Select a direction randomly, since I'm not implementing ADC
-        if ( (currWall->edge[1].x) != (currWall->edge[0].x) ) // If the first and last x values aren't equal (non vertical wall)
-        // Calculate the wall's slope
-        currWall->bresen.derr = ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
+        if ( (currWall->edge[1].x) != (currWall->edge[0].x) ) // If the edge's x values aren't equal (non vertical wall)
+        // Calculate the perpendicular to the wall's slope
+        currWall->bresen.derr = 1 / ( (currWall->edge[1].y) - (currWall->edge[0].y) )/( (currWall->edge[1].x) - (currWall->edge[0].x) );
         else // Vertical wall
         {
             currWall->bresen.vert = 1; currWall->bresen.derr = 0;
@@ -896,6 +926,7 @@ void timed_events(level *lvl, struct game *data)
     if (times.secondFragmentPassed)
     {
         if (times.secondFragments % data->characterSpeed == 0) moveTom(lvl, data);
+        if (times.secondFragments % data->wallSpeed == 0) moveWalls(lvl, data); // Wall movement
         times.secondFragmentPassed = 0;
     }
 }
@@ -910,6 +941,7 @@ void draw_walls(level *level, unsigned int show)
 {
     for (int i = 0; i < len(level->walls); i++) if (level->walls[i].valid)// For each valid wall
     {
+        //draw_formatted(i * 20, 10, "%d|%d", i, level->walls[i].bresen.vert);
         struct wallPixels wp = get_wallCoords(&level->walls[i]);
         for(int wallPixel = 0; wallPixel < wp.len; wallPixel++) // For each of its' pixels
         if (wp.wallCoords[wallPixel].y >= 10) // If within play area
@@ -964,7 +996,7 @@ void game() // Run a game
     gameData.done = 0;
     gameData.score = 0;
     gameData.characterSpeed = 1;
-    gameData.wallSpeed = 0;
+    gameData.wallSpeed = 16;
     gameData.lives = 5;
     gameData.super = 0;
     // Reset the time and unpause (in case the previous game was paused), also, reset the second indicator
@@ -973,7 +1005,7 @@ void game() // Run a game
     times.secondPassed = 0;
     times.secondFragmentPassed = 0;
     GAME_PAUSED(0);
-    for(gameData.level = 1; !gameData.done; gameData.level++) // After a game is set up, run the current game until a game over - level after level
+    for(gameData.level = 1; !gameData.done || gameData.level < 3; gameData.level++) // After a game is set up, run the current game until a game over or until level 2 is completed
     {
         level CurrLevel;
         levelInit(&gameData, &CurrLevel);
