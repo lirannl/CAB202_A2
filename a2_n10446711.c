@@ -799,13 +799,13 @@ void readControls(level *lvl, struct game *data)
         (serial_input == 'p' && !press_handled[buttonR])
     )
     {FLIP_BIT(TIMSK1, TOIE1); input[buttonR].press_handled = 1; press_handled[buttonR] = 1;}
-    if (!IS_GAME_PAUSED)
-    {
         // Handle character speed modification
         int adcVal = adc_read(0);
         float newSpeedVal = adcVal / 32;
         newSpeedVal /= 16;
         data->characterSpeed = newSpeedVal;
+    if (!IS_GAME_PAUSED) // No point in handling wall speed when paused since they won't move regardless
+    {
         // Handle wall movement speed modification
         adcVal = adc_read(1) - 512;
         newSpeedVal = adcVal / 32;
