@@ -86,6 +86,8 @@ struct inputModel
     uint8_t press_handled:1;
 };
 struct inputModel input[7];
+uint8_t press_handled[4];
+uint8_t serial_input = 255;
 
 typedef struct
 {
@@ -728,26 +730,73 @@ void fireFirework(level *lvl, struct game *data) // Taken from my first assignme
     }
 }
 
-uint8_t usb_serial_get_current_char()
+void serial_click_process()
 {
-    
+    if(serial_input != 'p') press_handled[0] = 0;
+    if(serial_input != 'l') press_handled[1] = 0;
+    if(serial_input != 'f') press_handled[2] = 0;
+    if(serial_input != 'i') press_handled[3] = 0;
+}
+
+void sendData(level *lvl, struct game *data)
+{
+    uint8_t cheese = 0;
+    uint8_t traps = 0;
+    uint8_t fireworks = 0;
+    for (int i = 0; i < len(lvl->rocket); i++) // Count objects
+    {
+        if (lvl->rocket[i].valid) fireworks++;
+        if (i <= 5)
+        {
+            if (lvl->cheese[i].valid) cheese++;
+            if (lvl->trap[i].valid) traps++;
+        }
+    }
+    char buffer[95];
+    sprintf(buffer, "%02d:%02d|Lvl:%d|<3:%d|S:%d|F:%d|T:%d|C:%d|RoomCheese:%d|Super:%c|P:%c\n ",
+    (int)floor(times.time/60), times.time%60,
+    data->level,
+    data->lives,
+    data->score,
+    fireworks,
+    traps,
+    cheese,
+    lvl->cheeseCollected,
+    data->super ? 't' : 'f',
+    IS_GAME_PAUSED ? 't' : 'f'
+    );
+    for (int i = 0; buffer[i] != 32; i++) if (i > 0) usb_serial_putchar(8);
+    for (int i = 0; buffer[i] != 32; i++) usb_serial_putchar(buffer[i]);
 }
 
 void readControls(level *lvl, struct game *data)
 {
-    uint8_t serialInput = 255; // By default set the USB input to nothing since it's uninitialised in level 1
-    if(usb_configured())serialInput = usb_serial_getchar();
-    if (input[joyLeft].switchClosed || serialInput == 'a') moveCharacterTo(getNextPosition(jerry.p, 180, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyRight].switchClosed || serialInput == 'd') moveCharacterTo(getNextPosition(jerry.p, 0, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyUp].switchClosed || serialInput == 'w') moveCharacterTo(getNextPosition(jerry.p, 270, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyDown].switchClosed || serialInput == 's') moveCharacterTo(getNextPosition(jerry.p, 90, data->characterSpeed), &jerry, lvl, data);
-    if ((input[joyPress].switchClosed || serialInput == 'f') && !input[joyPress].press_handled) // Once per joystick press
-    { fireFirework(lvl, data); input[joyPress].press_handled = 1; }
-    if (input[buttonL].switchClosed && !input[buttonL].press_handled)
-    {lvl->finished = 1; input[buttonL].press_handled = 1;}
+    serial_input = 255;
+    if(usb_serial_available()) {serial_input = usb_serial_getchar(); usb_serial_flush_input();} // Flush the buffer to reduce residual inputs on serial}
+    if (input[joyLeft].switchClosed || serial_input == 'a') moveCharacterTo(getNextPosition(jerry.p, 180, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyRight].switchClosed || serial_input == 'd') moveCharacterTo(getNextPosition(jerry.p, 0, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyUp].switchClosed || serial_input == 'w') moveCharacterTo(getNextPosition(jerry.p, 270, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyDown].switchClosed || serial_input == 's') moveCharacterTo(getNextPosition(jerry.p, 90, data->characterSpeed), &jerry, lvl, data);
+    if (
+        serial_input == 'i' && !press_handled[3]
+    )
+    {sendData(lvl, data); press_handled[3] = 1;}
+    if (
+        (input[joyPress].switchClosed && !input[joyPress].press_handled) ||
+        (serial_input == 'f' && !press_handled[2])
+        ) // Once per joystick press/f key press
+    { fireFirework(lvl, data); input[joyPress].press_handled = 1; press_handled[2] = 1; }
+    if (
+         (input[buttonL].switchClosed && !input[buttonL].press_handled) ||
+         (serial_input == 'l' && !press_handled[buttonL])
+    )
+    {lvl->finished = 1; input[buttonL].press_handled = 1; press_handled[buttonL] = 1;}
     // For every click of the right button - toggle a pause (ignoring the first second of each game - since the player just clicked it to proceed)
-    if (input[buttonR].switchClosed && !input[buttonR].press_handled && times.secondFragments > 2) 
-    {FLIP_BIT(TIMSK1, TOIE1); input[buttonR].press_handled = 1;}
+    if (
+        (input[buttonR].switchClosed && !input[buttonR].press_handled && times.secondFragments > 2) ||
+        (serial_input == 'p' && !press_handled[buttonR])
+    )
+    {FLIP_BIT(TIMSK1, TOIE1); input[buttonR].press_handled = 1; press_handled[buttonR] = 1;}
 }
 
 void checkCollisions(level *lvl, struct game *data)
@@ -1021,7 +1070,6 @@ void timed_events(level *lvl, struct game *data)
 {
     if (times.secondPassed)
     {
-        if (data->super == 10) {jerry.sprite = &superJerryBMP; clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &jerryBMP);} // If super mode started, switch Jerry's sprite to super jerry
         // Tick down the super timer every second and if super mode is over, switch the sprite back to normal jerry
         if (data->super > 0) 
         {
@@ -1078,15 +1126,14 @@ void draw_objects(level *level)
     }
 }
 
-
 void process(struct game *data, level *level) // Game tick
 {
     debounce_process();
+    serial_click_process();
+    if (data->super == 10) {jerry.sprite = &superJerryBMP; clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &jerryBMP);} // If super mode started, switch Jerry's sprite to super jerry
     if (data->lives == 0) {data->done = 1; return;} // If there are 0 lives left, game over.
     if (!IS_GAME_PAUSED) timed_events(level, data); // Timed events don't occur on the 0th second, nor do they occur while the game is paused
-    static int scaler = 0; // Establish a scaler for use with the moveFireWorks function
-    increment(&scaler, 1, 2); if (scaler == 0 && !IS_GAME_PAUSED)
-    moveFireWorks(level);
+    if (!IS_GAME_PAUSED) moveFireWorks(level);
     if (level->cheeseCollected >= 5 && !level->door.valid)  // If 5 or more cheese was collected in the level (and there isn't already a door)
     placeObj(level, &level->door); // Place the door to the next level
     readControls(level, data);
