@@ -814,7 +814,7 @@ void startingScreen()
     draw_string(0, 10, "n10446711", FG_COLOUR);
     draw_string(0, 20, "TJ", FG_COLOUR);
     show_screen();
-    long seed = 98123456;
+    long seed = 0;
     while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) {debounce_process(); seed++;} // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
     srand(seed); // Seed rand() based on the exact time the user pressed the right button to exit the starting screen
@@ -823,6 +823,7 @@ void startingScreen()
 void gameOverScreen()
 {
     clear_screen();
+    usb_serial_flush_input();
     draw_string(0, 0, "Game over!", FG_COLOUR);
     draw_string(0, 10, "Press SW3", FG_COLOUR);
     draw_string(0, 20, "To restart.", FG_COLOUR);
@@ -831,26 +832,96 @@ void gameOverScreen()
     input[buttonR].press_handled = 1;
 }
 
+#define createWall(wall, x1, y1, x2, y2) ({ \
+wall.edge[0].x = x1; wall.edge[0].y = y1; wall.edge[1].x = x2; wall.edge[1].y = y2; \
+wall.valid = 1;    \
+})
+
+uint8_t loadLvlFromLine(level *lvl, char *line, uint8_t *currWall)
+{
+    char cmd;
+    int x1;
+    int y1;
+    int x2;
+    int y2;
+    sscanf(line, "%c %d %d %d %d\n", &cmd, &x1, &y1, &x2, &y2);
+    show_screen();
+    switch (cmd) // For each line, read the command and execute it, if there is a fitting command (gracefully ignoring invalid commands):
+    {
+    case 'T': // Save Tom's starting coordinates
+        {
+            lvl->tom_startx = x1;
+            lvl->tom_starty = y1;
+        }
+        break;
+        
+    case 'J': // Save Jerry's starting coordinates
+        {
+            lvl->jerry_startx = x1;
+            lvl->jerry_starty = y1;
+        }
+        break;
+
+    case 'W': // Build walls
+        createWall(lvl->walls[*currWall], x1, y1, x2 ,y2);
+        *currWall = *currWall + 1;
+        break;
+    
+    default:
+        return 0;
+        break;
+    }
+    return 1;
+}
+
 void levelInitUSB(level *lvl, struct game *data)
 {
     clear_screen();
     draw_string(0, 0, "Please enter next", FG_COLOUR);
     draw_string(0, 10, "level via serial", FG_COLOUR);
+    draw_string(0, 20, "then SW 3", FG_COLOUR);
     show_screen();
-    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled) || usb_serial_getchar() == 'a') debounce_process(); // Wait until buttonR is pressed
+    char newLvlData[12][12];
+    //uint8_t flipper = 0;
+    uint8_t scanningStarted = 0;
+    uint8_t scannedVars = 1;
+    uint8_t wallNum = 0;
+    for (int line = 0; scannedVars;)
+    {
+        if(line == 0) clear_screen();
+        uint8_t lineRead = 0;
+        for(int linePos = 0; !lineRead;)
+        {
+            char c = 255;
+            c = usb_serial_getchar();
+            while (c == 255 && !scanningStarted)
+            {
+                c = usb_serial_getchar();
+            }
+            if (!scanningStarted) scanningStarted = 1;
+            if(c != 10 && c!= 255) {newLvlData[line][linePos] = c; linePos++;}
+            else lineRead = 1;
+            draw_int(0, 40, line, FG_COLOUR);
+            show_screen();
+        }
+        scannedVars = loadLvlFromLine(lvl, newLvlData[line], &wallNum);
+        draw_int(0, 0, scannedVars, FG_COLOUR);
+        line++;
+        _delay_ms(1000);
+        show_screen();
+    }
+    draw_string(0, 0, "Level loaded.", FG_COLOUR);
+    draw_string(0, 10, "Press SW3.", FG_COLOUR);
+    draw_string(0, 20, newLvlData[1], FG_COLOUR);
+    show_screen();
+    while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) debounce_process(); // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
-    data->done = 1; // Game completed - finish game and start a new one
 }
 
 object makeDef(tinyBitmap *bmp) // Object initialiser
     { 
         object returnval = {.valid = 0, .sprite = bmp}; return returnval;
     }
-
-#define createWall(wall, x1, y1, x2, y2) ({ \
-wall.edge[0].x = x1; wall.edge[0].y = y1; wall.edge[1].x = x2; wall.edge[1].y = y2; \
-wall.valid = 1;    \
-})
 
 void levelInit(struct game *data, level *thisLevel)
 {
@@ -1037,7 +1108,7 @@ void game() // Run a game
     times.secondPassed = 0;
     times.secondFragmentPassed = 0;
     GAME_PAUSED(0);
-    for(gameData.level = 1; !gameData.done || gameData.level < 3; gameData.level++) // After a game is set up, run the current game until a game over or until level 2 is completed
+    for(gameData.level = 1; !gameData.done && gameData.level < 3; gameData.level++) // After a game is set up, run the current game until a game over or until level 2 is completed
     {
         level CurrLevel;
         levelInit(&gameData, &CurrLevel);
