@@ -7,6 +7,7 @@
 #include <cpu_speed.h>
 #include <graphics.h>
 #include <macros.h>
+#include "cab202_adc.h"
 #include "lcd_model.h"
 #include "usb_serial.h"
 //---------------------------------------Macros and definitions---------------------------------
@@ -471,6 +472,7 @@ void setup(void) {
         SET_BIT(TIMSK1, TOIE1);
 	//	Enable interrupts.
     sei();
+    adc_init();
     // Enable LCD backlight
     SET_BIT(PORTC, PIN7);
     ddrSetup();
@@ -797,6 +799,20 @@ void readControls(level *lvl, struct game *data)
         (serial_input == 'p' && !press_handled[buttonR])
     )
     {FLIP_BIT(TIMSK1, TOIE1); input[buttonR].press_handled = 1; press_handled[buttonR] = 1;}
+    if (!IS_GAME_PAUSED)
+    {
+        // Handle character speed modification
+        int adcVal = adc_read(0);
+        float newSpeedVal = adcVal / 32;
+        newSpeedVal /= 16;
+        data->characterSpeed = newSpeedVal;
+        // Handle wall movement speed modification
+        adcVal = adc_read(1) - 512;
+        newSpeedVal = adcVal / 32;
+        newSpeedVal /= 80;
+        data->wallSpeed = newSpeedVal;
+    }
+    
 }
 
 void checkCollisions(level *lvl, struct game *data)
