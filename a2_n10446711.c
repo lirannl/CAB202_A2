@@ -728,13 +728,20 @@ void fireFirework(level *lvl, struct game *data) // Taken from my first assignme
     }
 }
 
+uint8_t usb_serial_get_current_char()
+{
+    
+}
+
 void readControls(level *lvl, struct game *data)
 {
-    if (input[joyLeft].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 180, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyRight].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 0, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyUp].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 270, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyDown].switchClosed) moveCharacterTo(getNextPosition(jerry.p, 90, data->characterSpeed), &jerry, lvl, data);
-    if (input[joyPress].switchClosed && !input[joyPress].press_handled) // Once per joystick press
+    uint8_t serialInput = 255; // By default set the USB input to nothing since it's uninitialised in level 1
+    if(usb_configured())serialInput = usb_serial_getchar();
+    if (input[joyLeft].switchClosed || serialInput == 'a') moveCharacterTo(getNextPosition(jerry.p, 180, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyRight].switchClosed || serialInput == 'd') moveCharacterTo(getNextPosition(jerry.p, 0, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyUp].switchClosed || serialInput == 'w') moveCharacterTo(getNextPosition(jerry.p, 270, data->characterSpeed), &jerry, lvl, data);
+    if (input[joyDown].switchClosed || serialInput == 's') moveCharacterTo(getNextPosition(jerry.p, 90, data->characterSpeed), &jerry, lvl, data);
+    if ((input[joyPress].switchClosed || serialInput == 'f') && !input[joyPress].press_handled) // Once per joystick press
     { fireFirework(lvl, data); input[joyPress].press_handled = 1; }
     if (input[buttonL].switchClosed && !input[buttonL].press_handled)
     {lvl->finished = 1; input[buttonL].press_handled = 1;}
@@ -899,20 +906,18 @@ void levelInitUSB(level *lvl, struct game *data)
                 c = usb_serial_getchar();
             }
             if (!scanningStarted) scanningStarted = 1;
+            draw_string(0, 0, "Loading...", FG_COLOUR);
+            draw_char(linePos * 4, 40, '_', FG_COLOUR);
             if(c != 10 && c!= 255) {newLvlData[line][linePos] = c; linePos++;}
             else lineRead = 1;
-            draw_int(0, 40, line, FG_COLOUR);
             show_screen();
         }
         scannedVars = loadLvlFromLine(lvl, newLvlData[line], &wallNum);
-        draw_int(0, 0, scannedVars, FG_COLOUR);
         line++;
-        _delay_ms(1000);
-        show_screen();
     }
     draw_string(0, 0, "Level loaded.", FG_COLOUR);
     draw_string(0, 10, "Press SW3.", FG_COLOUR);
-    draw_string(0, 20, newLvlData[1], FG_COLOUR);
+    for (int i = 0; i < LCD_X/4; i++) draw_char(i * 5, 40, ' ', FG_COLOUR);
     show_screen();
     while(!(input[buttonR].switchClosed && !input[buttonR].press_handled)) debounce_process(); // Wait until buttonR is pressed
     input[buttonR].press_handled = 1;
@@ -1102,11 +1107,13 @@ void game() // Run a game
     gameData.wallSpeed = 0.2;
     gameData.lives = 5;
     gameData.super = 0;
+    jerry.sprite = &jerryBMP;
     // Reset the time and unpause (in case the previous game was paused), also, reset the second indicator
     times.time = 0;
     times.secondFragments = 0;
     times.secondPassed = 0;
     times.secondFragmentPassed = 0;
+    // Uninitialise USB serial
     GAME_PAUSED(0);
     for(gameData.level = 1; !gameData.done && gameData.level < 3; gameData.level++) // After a game is set up, run the current game until a game over or until level 2 is completed
     {
