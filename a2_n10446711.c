@@ -21,7 +21,10 @@
 #define joyRight 5
 #define joyPress 6
 
-#define leds(val) ({WRITE_BIT(PORTB, PIN2, val); WRITE_BIT(PORTB, PIN3, val);})
+#define leds(val) ({ if(!val) {CLEAR_BIT(PORTB, PIN2); CLEAR_BIT(PORTB, PIN3);} \
+WRITE_BIT(DDRB, PIN2, val); \
+WRITE_BIT(DDRB, PIN3, val); \
+})
 
 #define COORD_TO_COORD 0
 #define OBJ_TO_COORD 1
@@ -34,6 +37,9 @@
 #define len(a) (sizeof(a) / sizeof((a)[0]))
 
 #define FLIP_BIT(reg, pin) (reg) ^= (1 << pin); // From my week 7 AMS - question 4
+
+#define BIT(x) (1 << (x)) // From week 11 AMS
+#define OVERFLOW_TOP (1023) // From week 11 AMS
 
 #define STATUS_BAR_HEIGHT 10
 
@@ -442,9 +448,6 @@ void ddrSetup()
     SET_INPUT(DDRD, PIN1); // Up
     CLEAR_BIT(DDRF, PIN6); // Left Button
     CLEAR_BIT(DDRF, PIN5); // Right Button
-    // Both LEDs
-    SET_OUTPUT(DDRB, PIN2);
-    SET_OUTPUT(DDRB, PIN3);
 }
 
 void setup(void) {
@@ -470,12 +473,18 @@ void setup(void) {
         WRITE_BIT(TCCR1B, CS10, 1);
         // Enable timer 1 interrupt
         SET_BIT(TIMSK1, TOIE1);
+    //---------Timer 4----------- - has a variable overflow period which can be controlled
+        `TC4H = OVERFLOW_TOP >> 0x8;
+        OCR4C = OVERFLOW_TOP & 0xff;
+        TCCR4A = 0;
+        TCCR4C = BIT(COM4D0) | BIT(PWM4D);
+        TCCR4B = BIT(CS43) | BIT(CS40); // Prescale of 256
 	//	Enable interrupts.
-    sei();
-    adc_init();
+        sei();
+        adc_init();
     // Enable LCD backlight
-    SET_BIT(PORTC, PIN7);
-    ddrSetup();
+        SET_BIT(PORTC, PIN7);
+        ddrSetup();
 }
 
 void debounce_switch(unsigned int index) // Modified from week 9 AMS, question 3
