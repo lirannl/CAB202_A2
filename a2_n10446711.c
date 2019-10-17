@@ -127,7 +127,7 @@ typedef struct
     firework rocket[20];
     object milk;
     object door;
-    uint8_t cheeseCollected:3;
+    uint8_t cheeseCollected;
     uint8_t tom_startx:7;
     uint8_t tom_starty:6;
     uint8_t jerry_startx:7;
@@ -200,7 +200,7 @@ void draw_wall(struct wallPixels *wp)
 uint8_t isWithinBounds(coords_int *p, uint8_t size, level *lvl) // Is this spot available to move to/place in?
 {
     if (
-    ( p->y>=(STATUS_BAR_HEIGHT+1) && p->y<(LCD_Y-size) ) && // Check if within play area vertically
+    ( p->y>=(STATUS_BAR_HEIGHT+2) && p->y<(LCD_Y-size) ) && // Check if within play area vertically
     ( p->x>=0 && p->x<(LCD_X-size) ) // Check if within play area horizontally
     )
     return 1; 
@@ -754,8 +754,9 @@ void sendData(level *lvl, struct game *data)
             if (lvl->trap[i].valid) traps++;
         }
     }
+    cheese -= (traps != 0) ? 1 : 0;
     char buffer[95];
-    sprintf(buffer, "%02d:%02d|Lvl:%d|<3:%d|S:%d|F:%d|T:%d|C:%d|RoomCheese:%d|Super:%c|P:%c\n ",
+    int len = snprintf(buffer, len(buffer), "%02d:%02d|Lvl:%d|<3:%d|S:%d|F:%d|T:%d|C:%d|RoomCheese:%d|Super:%c|P:%c\n ",
     (int)floor(times.time/60), times.time%60,
     data->level,
     data->lives,
@@ -767,8 +768,12 @@ void sendData(level *lvl, struct game *data)
     data->super ? 't' : 'f',
     IS_GAME_PAUSED ? 't' : 'f'
     );
-    for (int i = 0; buffer[i] != 32; i++) if (i > 0) usb_serial_putchar(8);
+    buffer[len+1] = 'x';
+    for (int i = 0; i < len; i++) if (i > len-58) usb_serial_putchar(8); // Remove leading spaces from the next line
+    draw_int(0, 30, len, FG_COLOUR);
+    show_screen();
     for (int i = 0; buffer[i] != 32; i++) usb_serial_putchar(buffer[i]);
+    for (int i = 0; i < len - 59; i++) usb_serial_putchar(8); // Trim follwing spaces due to strings that have different lengths
 }
 
 void readControls(level *lvl, struct game *data)
@@ -842,7 +847,7 @@ void checkCollisions(level *lvl, struct game *data)
         if (character_collides_obj(&jerry, &lvl->cheese[i])) // Handling cheese collision
         {
             data->score++;
-            if (lvl->cheeseCollected < 5) lvl->cheeseCollected++; // Register extra cheese collected - up to 5. I have no need to count beyond 5.
+            lvl->cheeseCollected++;
             lvl->cheese[i].valid = 0;
             clear_bmp(lvl->cheese[i].p.x, lvl->cheese[i].p.y, lvl->cheese[i].sprite);
         }
@@ -1155,6 +1160,8 @@ void process(struct game *data, level *level) // Game tick
     placeObj(level, &level->door); // Place the door to the next level
     readControls(level, data);
     checkCollisions(level, data);
+    if (IS_GAME_PAUSED) for (int i = 0; i < len(level->walls); i++) 
+    if (level->walls[i].valid) {struct wallPixels wp = get_wallCoords(&level->walls[i]); draw_wall(&wp);}
     draw_statusbar(level, data);
     draw_objects(level);
     if (!data->done) show_screen();
