@@ -186,7 +186,7 @@ void draw_formatted(int x, int y, const char * format, ...) {
 
 coords_int coords_to_int(coords *p_float)
 {
-    coords_int output = {.x = (int)round(p_float->x), .y  = (int)round(p_float->y)};
+    coords_int output = {.x = (int)floor(p_float->x), .y  = (int)floor(p_float->y)};
     return output;
 }
 
@@ -203,7 +203,7 @@ void draw_wall(struct wallPixels *wp)
 uint8_t isWithinBounds(coords_int *p, uint8_t size, level *lvl) // Is this spot available to move to/place in?
 {
     if (
-    ( p->y>=(STATUS_BAR_HEIGHT+2) && p->y<(LCD_Y-size) ) && // Check if within play area vertically
+    ( p->y>=(STATUS_BAR_HEIGHT+1) && p->y<(LCD_Y-size) ) && // Check if within play area vertically
     ( p->x>=0 && p->x<(LCD_X-size) ) // Check if within play area horizontally
     )
     return 1; 
