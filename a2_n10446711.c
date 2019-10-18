@@ -1121,6 +1121,10 @@ void timed_events(level *lvl, struct game *data)
                 leds(0);
                 jerry.sprite = &jerryBMP;
                 clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &superJerryBMP);
+                clear_bmp((int)round(jerry.p.x)+1, (int)round(jerry.p.y), &superJerryBMP);
+                clear_bmp((int)round(jerry.p.x)-1, (int)round(jerry.p.y), &superJerryBMP);
+                clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y)+1, &superJerryBMP);
+                clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y)-1, &superJerryBMP);
             }
         }
         if (times.time > 0) // Objects should not be placed during the 0th second
