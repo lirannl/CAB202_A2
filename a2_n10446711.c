@@ -1144,8 +1144,6 @@ void draw_statusbar(level *lvl, struct game *data)
 
 void draw_objects(level *level)
 {
-    draw_bmp(jerry.p.x, jerry.p.y, jerry.sprite);
-    draw_bmp(tom.p.x, tom.p.y, tom.sprite);
     for (int i = 0; i < len(level->cheese); i++)
     {
         if (level->cheese[i].valid) draw_bmp(level->cheese[i].p.x, level->cheese[i].p.y, level->cheese[i].sprite);
@@ -1164,6 +1162,8 @@ void draw_objects(level *level)
         draw_pixel(rocketCoords.x, rocketCoords.y - 1, BG_COLOUR);
         draw_pixel(rocketCoords.x, rocketCoords.y, FG_COLOUR); // Draw the firework
     }
+    draw_bmp(jerry.p.x, jerry.p.y, jerry.sprite);
+    draw_bmp(tom.p.x, tom.p.y, tom.sprite);
 }
 
 void process(struct game *data, level *level) // Game tick
