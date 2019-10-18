@@ -828,6 +828,7 @@ void checkCollisions(level *lvl, struct game *data)
     {
         if (data->super == 0) // Normal jerry respawns and loses a life
         {
+            leds(0);
             respawnCharacter(&jerry, lvl, data);
             data->lives--;
         }
@@ -840,6 +841,7 @@ void checkCollisions(level *lvl, struct game *data)
     }
     if (character_collides_obj(&jerry, &lvl->milk) && !data->super)
     {
+        leds(1);
         lvl->lastMilkConsumption = times.time % 5;
         data->super = 10; // Exit the current level
         lvl->milk.valid = 0;
@@ -1112,9 +1114,11 @@ void timed_events(level *lvl, struct game *data)
         // Tick down the super timer every second and if super mode is over, switch the sprite back to normal jerry
         if (data->super > 0) 
         {
+            leds(!BIT_VALUE(PORTB, PIN3));
             data->super--; 
             if (data->super == 0) 
             {
+                leds(0);
                 jerry.sprite = &jerryBMP;
                 clear_bmp((int)round(jerry.p.x), (int)round(jerry.p.y), &superJerryBMP);
             }
@@ -1177,8 +1181,12 @@ void process(struct game *data, level *level) // Game tick
     placeObj(level, &level->door); // Place the door to the next level
     readControls(level, data);
     checkCollisions(level, data);
-    if (IS_GAME_PAUSED) for (int i = 0; i < len(level->walls); i++) 
-    if (level->walls[i].valid) {struct wallPixels wp = get_wallCoords(&level->walls[i]); draw_wall(&wp);}
+    if (IS_GAME_PAUSED) 
+    {
+    for (int i = 0; i < len(level->walls); i++)
+        if (level->walls[i].valid) {struct wallPixels wp = get_wallCoords(&level->walls[i]); draw_wall(&wp);}
+    leds(0);
+    }
     draw_statusbar(level, data);
     draw_objects(level);
     if (!data->done) show_screen();
