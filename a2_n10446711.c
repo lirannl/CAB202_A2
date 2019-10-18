@@ -127,6 +127,9 @@ typedef struct
     firework rocket[20];
     object milk;
     object door;
+    uint8_t lastCheeseCollection : 1;
+    uint8_t lastTrapTriggering : 2;
+    uint8_t lastMilkConsumption : 3;
     uint8_t cheeseCollected;
     uint8_t tom_startx:7;
     uint8_t tom_starty:6;
@@ -838,6 +841,7 @@ void checkCollisions(level *lvl, struct game *data)
     }
     if (character_collides_obj(&jerry, &lvl->milk) && !data->super)
     {
+        lvl->lastMilkConsumption = times.time % 5;
         data->super = 10; // Exit the current level
         lvl->milk.valid = 0;
         clear_bmp(lvl->milk.p.x, lvl->milk.p.y, lvl->milk.sprite);
@@ -846,6 +850,10 @@ void checkCollisions(level *lvl, struct game *data)
     {
         if (character_collides_obj(&jerry, &lvl->cheese[i])) // Handling cheese collision
         {
+            uint8_t cheeseOnScreen = 0;
+            for (int i = 0; i < len(lvl->cheese); i++) if (lvl->cheese[i].valid) cheeseOnScreen++;
+            if (cheeseOnScreen == 5) // If the level is full of cheese
+            lvl->lastCheeseCollection = times.time % 2;
             data->score++;
             lvl->cheeseCollected++;
             lvl->cheese[i].valid = 0;
@@ -853,6 +861,10 @@ void checkCollisions(level *lvl, struct game *data)
         }
         if (character_collides_obj(&jerry, &lvl->trap[i]) && !data->super) // Handling trap collision
         {
+            uint8_t trapsOnScreen = 0;
+            for (int i = 0; i < len(lvl->trap); i++) if (lvl->trap[i].valid) trapsOnScreen++;
+            if (trapsOnScreen == 5) // If the level is full of traps
+            lvl->lastTrapTriggering = times.time % 3;
             data->lives--;
             lvl->trap[i].valid = 0;
             clear_bmp(lvl->trap[i].p.x, lvl->trap[i].p.y, lvl->trap[i].sprite);
@@ -1002,6 +1014,9 @@ void levelInit(struct game *data, level *thisLevel)
 {
     thisLevel->finished = 0;
     thisLevel->cheeseCollected = 0;
+    thisLevel->lastCheeseCollection = 0;
+    thisLevel->lastTrapTriggering = 0;
+    thisLevel->lastMilkConsumption = 0;
     for (int i = 0; i < 6; i++) thisLevel->walls[i].valid = 0; // Make all walls invalid by default
     if (data->level == 1) // When initiating level 1 -
     {
@@ -1020,7 +1035,10 @@ void levelInit(struct game *data, level *thisLevel)
     if (data->level == 2) // Specifically after level 1 - enable USB serial
     {
         usb_init(); // Enable serial
+        uint8_t prev_paused = IS_GAME_PAUSED; // Record whether the game was paused or not
+        GAME_PAUSED(1); // Pause the timer during the load
         levelInitUSB(thisLevel, data); // Initialise level from USB
+        GAME_PAUSED(prev_paused); // Restore the previous pause state
     }
     // Calculate walls' angles (on levelinit, since walls don't rotate during gameplay)
     for(int i = 0; i < len(thisLevel->walls); i++)
@@ -1104,8 +1122,8 @@ void timed_events(level *lvl, struct game *data)
         }
         if (times.time > 0) // Objects should not be placed during the 0th second
         {
-            if (times.time % 2 == 0) placeCheese(lvl);
-            if (times.time % 3 == 0) for(int i = 0; i < len(lvl->trap); i++) placeObjAttempt(&lvl->trap[i], lvl);
+            if ((times.time - lvl->lastCheeseCollection) % 2 == 0) placeCheese(lvl);
+            if ((times.time - lvl->lastTrapTriggering) % 3 == 0) for(int i = 0; i < len(lvl->trap); i++) placeObjAttempt(&lvl->trap[i], lvl);
             if (times.time % 5 == 0 && data->level > 1) placeObjAttempt(&lvl->milk, lvl);
         }
         times.secondPassed = 0; // Reset secondPassed, since the events for this second have now already been completed
