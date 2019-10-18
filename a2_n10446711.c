@@ -45,12 +45,12 @@ typedef struct
     const unsigned long image : 25;
     const uint8_t big : 1;
 } tinyBitmap;
-tinyBitmap tomBMP = {.big = 0, .image = 0b0000000100010100010000000};
+tinyBitmap tomBMP = {.big = 0, .image = 0b0000001110001000010000000};
 tinyBitmap jerryBMP = {.big = 0, .image = 0b0000001110001000100000000};
 tinyBitmap superJerryBMP = {.big = 1, .image = 0b1111100100001000010011000};
 tinyBitmap cheeseBMP = {.big = 0, .image = 0b0000000100010100111000000};
 tinyBitmap doorBMP = {.big = 1, .image = 0b0111001010010100101001110};
-tinyBitmap trapBMP = {.big = 0, .image = 0b0000001110000000111000000};
+tinyBitmap trapBMP = {.big = 0, .image = 0b0000001010001000101000000};
 tinyBitmap milkBMP = {.big = 1, .image = 0b0000010001100010111000000};
 
 typedef struct // 2 bytes
@@ -773,7 +773,6 @@ void sendData(level *lvl, struct game *data)
     );
     buffer[len+1] = 'x';
     for (int i = 0; i < len; i++) if (i > len-58) usb_serial_putchar(8); // Remove leading spaces from the next line
-    draw_int(0, 30, len, FG_COLOUR);
     show_screen();
     for (int i = 0; buffer[i] != 32; i++) usb_serial_putchar(buffer[i]);
     for (int i = 0; i < len - 59; i++) usb_serial_putchar(8); // Trim follwing spaces due to strings that have different lengths
