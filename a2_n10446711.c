@@ -476,6 +476,7 @@ void setup(void) {
 	//	Enable interrupts.
     sei();
     adc_init();
+    usb_init(); // Enable serial
     // Enable LCD backlight
     SET_BIT(PORTC, PIN7);
     ddrSetup();
@@ -984,7 +985,7 @@ void levelInitUSB(level *lvl, struct game *data)
         {
             char c = 255;
             c = usb_serial_getchar();
-            while (c == 255 && !scanningStarted)
+            while (c != 'T' && c != 'J' && c != 'W' && !scanningStarted)
             {
                 c = usb_serial_getchar();
             }
@@ -1035,7 +1036,6 @@ void levelInit(struct game *data, level *thisLevel)
     }
     if (data->level == 2) // Specifically after level 1 - enable USB serial
     {
-        usb_init(); // Enable serial
         uint8_t prev_paused = IS_GAME_PAUSED; // Record whether the game was paused or not
         GAME_PAUSED(1); // Pause the timer during the load
         levelInitUSB(thisLevel, data); // Initialise level from USB
@@ -1137,7 +1137,7 @@ void timed_events(level *lvl, struct game *data)
     }
     if (times.secondFragmentPassed)
     {
-        if(data->wallSpeed != 0) moveWalls(lvl, data); // No point in trying to move the walls if wallspeed is equal to 0
+        moveWalls(lvl, data); // No point in trying to move the walls if wallspeed is equal to 0
         moveTom(lvl, data);
         times.secondFragmentPassed = 0;
     }
@@ -1195,8 +1195,6 @@ void process(struct game *data, level *level) // Game tick
     draw_objects(level);
     if (!data->done) show_screen();
 }
-
-
 
 void game() // Run a game
 {
